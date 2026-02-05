@@ -753,12 +753,27 @@
             }
 
             try {
-                const docRef = await addDoc(collection(db, "katsetusaktid"), {
-                    ...data,
+                // Convert complex nested structure to Firestore-friendly format
+                const firestoreData = {
+                    workNumber: data.workNumber,
+                    workDate: data.workDate,
+                    object: data.object,
+                    address: data.address,
+                    client: data.client,
+                    compiler: data.compiler,
+                    workType: data.workType,
+                    systemStatus: data.systemStatus,
+                    notes: data.notes || '',
+                    signatureImage: data.signatureImage || '',
+                    timestamp: data.timestamp,
                     status: 'submitted',
-                    submittedAt: serverTimestamp(),
-                    createdAt: new Date().toISOString()
-                });
+                    createdAt: serverTimestamp()
+                };
+
+                // Add sejks as a serialized JSON string (Firestore doesn't support nested arrays well)
+                firestoreData.sejksData = JSON.stringify(data.sejks);
+                
+                const docRef = await addDoc(collection(db, "katsetusaktid"), firestoreData);
                 
                 showToast('✓ Akt saadetud pilve! ID: ' + docRef.id.substring(0, 6));
                 
