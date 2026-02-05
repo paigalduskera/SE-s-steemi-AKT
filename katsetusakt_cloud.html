@@ -622,17 +622,6 @@
     </div>
 
     <div class="top-info">
-        <div class="user-select">
-            <label class="info-label">Paigaldaja</label>
-            <select id="userName" onchange="saveUserName()">
-                <option value="">Vali oma nimi...</option>
-                <option value="Tanel">Tanel</option>
-                <option value="Silvar">Silvar</option>
-                <option value="Margus">Margus</option>
-                <option value="Priit">Priit</option>
-            </select>
-        </div>
-
         <div class="info-grid">
             <div class="info-field">
                 <label class="info-label">Töö Nr</label>
@@ -655,8 +644,14 @@
                 <input type="text" class="info-input" id="client" placeholder="">
             </div>
             <div class="info-field">
-                <label class="info-label">Koostas</label>
-                <input type="text" class="info-input" id="compiler" placeholder="">
+                <label class="info-label">Koostas (Paigaldaja)</label>
+                <input type="text" class="info-input" id="compiler" list="paigaldajad" placeholder="Vali või kirjuta nimi..." onchange="saveUserName()">
+                <datalist id="paigaldajad">
+                    <option value="Tanel">
+                    <option value="Silvar">
+                    <option value="Margus">
+                    <option value="Priit">
+                </datalist>
             </div>
         </div>
 
@@ -736,9 +731,9 @@
 
         // Make sendToCloud available globally
         window.sendToCloudReal = async function() {
-            const userName = document.getElementById('userName').value;
-            if (!userName) {
-                showToast('⚠ Vali oma nimi!');
+            const compiler = document.getElementById('compiler').value;
+            if (!compiler) {
+                showToast('⚠ Lisa oma nimi (Koostas)!');
                 return;
             }
 
@@ -760,7 +755,6 @@
             try {
                 const docRef = await addDoc(collection(db, "katsetusaktid"), {
                     ...data,
-                    userName: userName,
                     status: 'submitted',
                     submittedAt: serverTimestamp(),
                     createdAt: new Date().toISOString()
@@ -788,12 +782,12 @@
         // Load saved user name
         const savedUser = localStorage.getItem('katsetusakt_user');
         if (savedUser) {
-            document.getElementById('userName').value = savedUser;
+            document.getElementById('compiler').value = savedUser;
         }
 
         function saveUserName() {
-            const userName = document.getElementById('userName').value;
-            localStorage.setItem('katsetusakt_user', userName);
+            const compiler = document.getElementById('compiler').value;
+            localStorage.setItem('katsetusakt_user', compiler);
         }
 
         let sejkCounter = 0;
@@ -1200,6 +1194,16 @@
             toast.classList.add('show');
             setTimeout(() => toast.classList.remove('show'), 3000);
         }
+
+        // Convert status code to full text for PDF/display
+        window.getStatusText = function(statusCode) {
+            const statusMap = {
+                'k': 'Korras',
+                'p': 'Puudub',
+                'o': 'Osaliselt'
+            };
+            return statusMap[statusCode] || statusCode;
+        };
 
         // Add first SEJK on load
         addSejk();
