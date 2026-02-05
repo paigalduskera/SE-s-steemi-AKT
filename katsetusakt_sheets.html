@@ -646,9 +646,10 @@
 
     <button class="fab" onclick="addSejk()">+</button>
 
-    <div class="bottom-bar">
+    <div class="bottom-bar" style="grid-template-columns: repeat(3, 1fr);">
         <button class="btn btn-primary" onclick="saveForm()">💾 Salvesta</button>
         <button class="btn btn-success" onclick="exportPDF()">📄 PDF</button>
+        <button class="btn" style="background: #FF9800; color: white;" onclick="uploadPDFToDrive()">☁️ Drive</button>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -1032,22 +1033,15 @@
             };
         }
 
+        let lastSavedRowNumber = null;
+
         async function saveForm() {
             const data = getFormData();
             
             // Save locally first
             localStorage.setItem('katsetusakt_mobile', JSON.stringify(data));
             
-            // Check if data is too large (signature causes this)
-            const dataSize = JSON.stringify(data).length;
-            
-            if (dataSize > 6000) {
-                // Too large for URL - save only locally
-                showToast('✓ Salvestatud lokaalselt (allkirjaga)');
-                return;
-            }
-            
-            // Try to send to Google Sheets (GET method)
+            // Try to send to Google Sheets
             try {
                 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_lgIpAfXxeBGCPa0MqqNaXUWXu92YfgFTc-BEaY6WtBtq5_349rf1YgnDqySNXLuBxQ/exec';
                 
@@ -1062,13 +1056,80 @@
                 const result = await response.json();
                 
                 if (result.success) {
-                    showToast('✓ Salvestatud Google Sheets\'i!');
+                    lastSavedRowNumber = result.rowNumber;
+                    showToast('✓ Salvestatud! (Rida: ' + lastSavedRowNumber + ')');
                 } else {
                     throw new Error(result.message || 'Viga');
                 }
             } catch (error) {
                 console.error('Google Sheets error:', error);
                 showToast('✓ Salvestatud lokaalselt');
+            }
+        }
+
+        async function uploadPDFToDrive() {
+            if (!lastSavedRowNumber) {
+                showToast('⚠ Salvesta akt kõigepealt!');
+                return;
+            }
+
+            try {
+                showToast('📤 Genereerin PDF-i...');
+                
+                // Generate PDF
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF('l', 'mm', 'a4');
+                const data = getFormData();
+                
+                // Add content to PDF (simplified version)
+                let y = 15;
+                doc.setFontSize(16);
+                doc.text('SE SÜSTEEMI KATSETUSAKT', 148, y, { align: 'center' });
+                y += 10;
+                
+                doc.setFontSize(10);
+                doc.text('Keraplast OÜ | Reg: 12053007', 148, y, { align: 'center' });
+                y += 15;
+                
+                doc.setFontSize(11);
+                doc.text(`Töö Nr: ${data.workNumber || '-'}`, 20, y);
+                y += 7;
+                doc.text(`Kuupäev: ${data.workDate || '-'}`, 20, y);
+                y += 7;
+                doc.text(`Objekt: ${data.object || '-'}`, 20, y);
+                y += 7;
+                doc.text(`Aadress: ${data.address || '-'}`, 20, y);
+                y += 7;
+                doc.text(`Koostas: ${data.compiler || '-'}`, 20, y);
+                
+                // Get PDF as base64
+                const pdfBase64 = doc.output('dataurlstring');
+                const filename = `Katsetusakt_${data.workNumber || 'uus'}_${data.workDate || new Date().toLocaleDateString('et-EE')}.pdf`;
+                
+                showToast('☁️ Laen Drive\'i...');
+                
+                // Upload to Drive
+                const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_lgIpAfXxeBGCPa0MqqNaXUWXu92YfgFTc-BEaY6WtBtq5_349rf1YgnDqySNXLuBxQ/exec';
+                
+                const params = new URLSearchParams({
+                    action: 'uploadPDF',
+                    pdfData: pdfBase64,
+                    filename: filename,
+                    rowNumber: lastSavedRowNumber.toString()
+                });
+                
+                const response = await fetch(`${GOOGLE_SCRIPT_URL}?${params.toString()}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    showToast('✓ PDF Drive\'is!');
+                } else {
+                    throw new Error(result.message);
+                }
+                
+            } catch (error) {
+                console.error('Upload error:', error);
+                showToast('❌ Viga: ' + error.message);
             }
         }
 
