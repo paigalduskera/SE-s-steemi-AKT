@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Katsetusaktide Haldus - Keraplast OÜ</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .controls {
+            padding: 20px 30px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .search-box {
+            flex: 1;
+            min-width: 250px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            padding: 20px 30px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .stat-card {
+            flex: 1;
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .stat-card h3 {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .stat-card p {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .table-container {
+            padding: 30px;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead {
+            background: #f8f9fa;
+        }
+
+        th {
+            padding: 15px;
+            text-align: left;
+            font-size: 13px;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            border-bottom: 2px solid #e0e0e0;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        th:hover {
+            background: #eeeff1;
+        }
+
+        th.sortable::after {
+            content: ' ↕';
+            opacity: 0.3;
+        }
+
+        th.sorted-asc::after {
+            content: ' ↑';
+            opacity: 1;
+            color: #667eea;
+        }
+
+        th.sorted-desc::after {
+            content: ' ↓';
+            opacity: 1;
+            color: #667eea;
+        }
+
+        tbody tr {
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s;
+        }
+
+        tbody tr:hover {
+            background: #f8f9ff;
+        }
+
+        td {
+            padding: 15px;
+            font-size: 14px;
+            color: #333;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 500;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #666;
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: #999;
+        }
+
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.3;
+        }
+
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+            }
+
+            .stats {
+                flex-direction: column;
+            }
+
+            .table-container {
+                padding: 15px;
+            }
+
+            table {
+                font-size: 12px;
+            }
+
+            th, td {
+                padding: 10px 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔥 Katsetusaktide Haldus</h1>
+            <p>Keraplast OÜ - Turvalisussüsteemide katsetusaktid</p>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <h3>Kokku Akte</h3>
+                <p id="totalCount">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Selle Kuu</h3>
+                <p id="monthCount">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Täna</h3>
+                <p id="todayCount">-</p>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="🔍 Otsi (aadress, objekt, paigaldaja, work number...)">
+            </div>
+        </div>
+
+        <div class="table-container">
+            <div id="loading" class="loading">Laadin akte</div>
+            <table id="actsTable" style="display: none;">
+                <thead>
+                    <tr>
+                        <th class="sortable" data-sort="createdAt">Kuupäev</th>
+                        <th class="sortable" data-sort="address">Aadress</th>
+                        <th class="sortable" data-sort="workNumber">Work Number</th>
+                        <th class="sortable" data-sort="compiler">Paigaldaja</th>
+                        <th>Tegevused</th>
+                    </tr>
+                </thead>
+                <tbody id="actsTableBody">
+                </tbody>
+            </table>
+            <div id="emptyState" class="empty-state" style="display: none;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <h3>Aktid puuduvad</h3>
+                <p>Ühtegi akti pole veel salvestatud</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
+        import { getFirestore, collection, getDocs, deleteDoc, doc, query, orderBy } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+
+        // Firebase config - ASENDA NEED OMA VÄÄRTUSTEGA!
+        const firebaseConfig = {
+            apiKey: "AIzaSyBdwjTXaL3kPlr2yRoHvcMJTR5LUZy0r5c",
+            authDomain: "katsetusakt-keraplast.firebaseapp.com",
+            projectId: "katsetusakt-keraplast",
+            storageBucket: "katsetusakt-keraplast.firebasestorage.app",
+            messagingSenderId: "138381752322",
+            appId: "1:138381752322:web:f73719b94dde4df669cf1b"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        let allActs = [];
+        let sortField = 'createdAt';
+        let sortDirection = 'desc';
+
+        // Load acts from Firebase
+        async function loadActs() {
+            try {
+                const actsRef = collection(db, 'katsetusaktid');
+                const q = query(actsRef, orderBy('createdAt', 'desc'));
+                const querySnapshot = await getDocs(q);
+                
+                allActs = [];
+                querySnapshot.forEach((doc) => {
+                    allActs.push({
+                        id: doc.id,
+                        ...doc.data()
+                    });
+                });
+
+                updateStats();
+                displayActs(allActs);
+            } catch (error) {
+                console.error('Viga aktide laadimisel:', error);
+                document.getElementById('loading').innerHTML = '❌ Viga andmete laadimisel: ' + error.message;
+            }
+        }
+
+        // Update statistics
+        function updateStats() {
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+            const todayCount = allActs.filter(act => {
+                const actDate = act.createdAt?.toDate ? act.createdAt.toDate() : new Date(act.createdAt);
+                return actDate >= today;
+            }).length;
+
+            const monthCount = allActs.filter(act => {
+                const actDate = act.createdAt?.toDate ? act.createdAt.toDate() : new Date(act.createdAt);
+                return actDate >= monthStart;
+            }).length;
+
+            document.getElementById('totalCount').textContent = allActs.length;
+            document.getElementById('todayCount').textContent = todayCount;
+            document.getElementById('monthCount').textContent = monthCount;
+        }
+
+        // Display acts in table
+        function displayActs(acts) {
+            const tbody = document.getElementById('actsTableBody');
+            const loading = document.getElementById('loading');
+            const table = document.getElementById('actsTable');
+            const emptyState = document.getElementById('emptyState');
+
+            loading.style.display = 'none';
+
+            if (acts.length === 0) {
+                table.style.display = 'none';
+                emptyState.style.display = 'block';
+                return;
+            }
+
+            table.style.display = 'table';
+            emptyState.style.display = 'none';
+
+            tbody.innerHTML = acts.map(act => {
+                const date = act.createdAt?.toDate ? act.createdAt.toDate() : new Date(act.createdAt);
+                const dateStr = date.toLocaleDateString('et-EE', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+
+                return `
+                    <tr>
+                        <td>${dateStr}</td>
+                        <td>${act.address || '-'}</td>
+                        <td>${act.workNumber || '-'}</td>
+                        <td>${act.compiler || '-'}</td>
+                        <td class="actions">
+                            <button class="btn btn-primary" onclick="downloadPDF('${act.id}')">📄 PDF</button>
+                            <button class="btn btn-danger" onclick="deleteAct('${act.id}')">🗑️</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // Search functionality
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            const searchTerm = e.target.value.toLowerCase();
+            const filtered = allActs.filter(act => {
+                return (act.address || '').toLowerCase().includes(searchTerm) ||
+                       (act.object || '').toLowerCase().includes(searchTerm) ||
+                       (act.compiler || '').toLowerCase().includes(searchTerm) ||
+                       (act.workNumber || '').toLowerCase().includes(searchTerm);
+            });
+            displayActs(filtered);
+        });
+
+        // Sorting functionality
+        document.querySelectorAll('th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const field = th.dataset.sort;
+                
+                if (sortField === field) {
+                    sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+                } else {
+                    sortField = field;
+                    sortDirection = 'asc';
+                }
+
+                // Update headers
+                document.querySelectorAll('th.sortable').forEach(h => {
+                    h.classList.remove('sorted-asc', 'sorted-desc');
+                });
+                th.classList.add(sortDirection === 'asc' ? 'sorted-asc' : 'sorted-desc');
+
+                // Sort acts
+                const sorted = [...allActs].sort((a, b) => {
+                    let aVal = a[field];
+                    let bVal = b[field];
+
+                    if (field === 'createdAt') {
+                        aVal = aVal?.toDate ? aVal.toDate().getTime() : new Date(aVal).getTime();
+                        bVal = bVal?.toDate ? bVal.toDate().getTime() : new Date(bVal).getTime();
+                    }
+
+                    if (sortDirection === 'asc') {
+                        return aVal > bVal ? 1 : -1;
+                    } else {
+                        return aVal < bVal ? 1 : -1;
+                    }
+                });
+
+                displayActs(sorted);
+            });
+        });
+
+        // Delete act
+        window.deleteAct = async function(actId) {
+            if (!confirm('Kas oled kindel, et soovid selle akti kustutada?')) {
+                return;
+            }
+
+            try {
+                await deleteDoc(doc(db, 'katsetusaktid', actId));
+                alert('✅ Akt kustutatud!');
+                loadActs();
+            } catch (error) {
+                alert('❌ Viga kustutamisel: ' + error.message);
+            }
+        };
+
+        // Download PDF (placeholder - will implement next)
+        window.downloadPDF = function(actId) {
+            alert('PDF genereerimine tuleb järgmisena! ID: ' + actId);
+        };
+
+        // Load acts on page load
+        loadActs();
+    </script>
+</body>
+</html>
