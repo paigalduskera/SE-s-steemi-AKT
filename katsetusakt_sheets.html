@@ -646,10 +646,9 @@
 
     <button class="fab" onclick="addSejk()">+</button>
 
-    <div class="bottom-bar" style="grid-template-columns: repeat(3, 1fr);">
+    <div class="bottom-bar">
         <button class="btn btn-primary" onclick="saveForm()">💾 Salvesta</button>
         <button class="btn btn-success" onclick="exportPDF()">📄 PDF</button>
-        <button class="btn" style="background: #FF9800; color: white;" onclick="uploadPDFToDrive()">☁️ Drive</button>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -1067,72 +1066,6 @@
             }
         }
 
-        async function uploadPDFToDrive() {
-            if (!lastSavedRowNumber) {
-                showToast('⚠ Salvesta akt kõigepealt!');
-                return;
-            }
-
-            try {
-                showToast('📤 Genereerin PDF-i...');
-                
-                // Generate PDF
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF('l', 'mm', 'a4');
-                const data = getFormData();
-                
-                // Add content to PDF (simplified version)
-                let y = 15;
-                doc.setFontSize(16);
-                doc.text('SE SÜSTEEMI KATSETUSAKT', 148, y, { align: 'center' });
-                y += 10;
-                
-                doc.setFontSize(10);
-                doc.text('Keraplast OÜ | Reg: 12053007', 148, y, { align: 'center' });
-                y += 15;
-                
-                doc.setFontSize(11);
-                doc.text(`Töö Nr: ${data.workNumber || '-'}`, 20, y);
-                y += 7;
-                doc.text(`Kuupäev: ${data.workDate || '-'}`, 20, y);
-                y += 7;
-                doc.text(`Objekt: ${data.object || '-'}`, 20, y);
-                y += 7;
-                doc.text(`Aadress: ${data.address || '-'}`, 20, y);
-                y += 7;
-                doc.text(`Koostas: ${data.compiler || '-'}`, 20, y);
-                
-                // Get PDF as base64
-                const pdfBase64 = doc.output('dataurlstring');
-                const filename = `Katsetusakt_${data.workNumber || 'uus'}_${data.workDate || new Date().toLocaleDateString('et-EE')}.pdf`;
-                
-                showToast('☁️ Laen Drive\'i...');
-                
-                // Upload to Drive
-                const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_lgIpAfXxeBGCPa0MqqNaXUWXu92YfgFTc-BEaY6WtBtq5_349rf1YgnDqySNXLuBxQ/exec';
-                
-                const params = new URLSearchParams({
-                    action: 'uploadPDF',
-                    pdfData: pdfBase64,
-                    filename: filename,
-                    rowNumber: lastSavedRowNumber.toString()
-                });
-                
-                const response = await fetch(`${GOOGLE_SCRIPT_URL}?${params.toString()}`);
-                const result = await response.json();
-                
-                if (result.success) {
-                    showToast('✓ PDF Drive\'is!');
-                } else {
-                    throw new Error(result.message);
-                }
-                
-            } catch (error) {
-                console.error('Upload error:', error);
-                showToast('❌ Viga: ' + error.message);
-            }
-        }
-
         function exportPDF() {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF('l', 'mm', 'a4');
@@ -1253,8 +1186,18 @@
                 });
             }
 
-            doc.save(`Katsetusakt_${data.workNumber || 'uus'}_${new Date().toISOString().split('T')[0]}.pdf`);
+            // Generate filename: [Aadress]_[TööNr]_[Kuupäev].pdf
+            const cleanAddress = (data.address || 'aadress').replace(/[^a-zA-Z0-9äöüõÄÖÜÕ]/g, '');
+            const cleanWorkNumber = (data.workNumber || 'tööNr').replace(/[^a-zA-Z0-9]/g, '');
+            const dateStr = data.workDate || new Date().toLocaleDateString('et-EE');
+            const filename = `${cleanAddress}_${cleanWorkNumber}_${dateStr}.pdf`;
+
+            doc.save(filename);
             showToast('✓ PDF eksporditud!');
+            
+            // Store PDF for email
+            window.lastGeneratedPDF = doc.output('dataurlstring');
+            window.lastPDFFilename = filename;
         }
 
         function showToast(message) {
