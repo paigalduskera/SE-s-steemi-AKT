@@ -770,12 +770,21 @@
                     createdAt: serverTimestamp()
                 };
 
-                // Add sejks as a serialized JSON string (Firestore doesn't support nested arrays well)
+                // Add sejks as a serialized JSON string
                 firestoreData.sejksData = JSON.stringify(data.sejks);
+                
+                // Check total size (Firestore limit is ~1MB)
+                const dataSize = JSON.stringify(firestoreData).length;
+                const sizeMB = (dataSize / 1024 / 1024).toFixed(2);
+                
+                if (dataSize > 900000) { // 900KB safety margin
+                    showToast(`⚠ Andmed liiga suured (${sizeMB}MB)! Eemalda pilte.`);
+                    return;
+                }
                 
                 const docRef = await addDoc(collection(db, "katsetusaktid"), firestoreData);
                 
-                showToast('✓ Akt saadetud pilve! ID: ' + docRef.id.substring(0, 6));
+                showToast(`✓ Akt saadetud! ID: ${docRef.id.substring(0, 6)} (${sizeMB}MB)`);
                 
                 // Optional: Clear form after successful send
                 setTimeout(() => {
@@ -1090,21 +1099,52 @@
             document.getElementById(`photo-${sejkId}`).click();
         }
 
-        function handlePhoto(sejkId, event) {
+        // Compress image to reduce file size
+        function compressImage(base64Image, maxWidth = 800, quality = 0.6) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+
+                    // Calculate new dimensions
+                    if (width > maxWidth) {
+                        height = (height * maxWidth) / width;
+                        width = maxWidth;
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    // Convert to compressed JPEG
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                };
+                img.src = base64Image;
+            });
+        }
+
+        async function handlePhoto(sejkId, event) {
             const files = event.target.files;
             const container = document.getElementById(`photos-${sejkId}`);
             
-            Array.from(files).forEach(file => {
+            for (const file of files) {
                 const reader = new FileReader();
-                reader.onload = function(e) {
+                reader.onload = async function(e) {
+                    // Compress the image before adding
+                    const compressed = await compressImage(e.target.result);
+                    
                     const img = document.createElement('img');
-                    img.src = e.target.result;
+                    img.src = compressed;
                     img.className = 'photo-preview';
-                    img.onclick = () => showPhotoModal(e.target.result);
+                    img.onclick = () => showPhotoModal(compressed);
                     container.appendChild(img);
                 };
                 reader.readAsDataURL(file);
-            });
+            }
         }
 
         function showPhotoModal(src) {
