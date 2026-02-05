@@ -1038,22 +1038,26 @@
             // Save locally
             localStorage.setItem('katsetusakt_mobile', JSON.stringify(data));
             
-            // Send to Google Sheets
+            // Send to Google Sheets using GET with params (JSONP workaround)
             try {
                 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_lgIpAfXxeBGCPa0MqqNaXUWXu92YfgFTc-BEaY6WtBtq5_349rf1YgnDqySNXLuBxQ/exec';
                 
                 showToast('📤 Saadan Google Sheets\'i...');
                 
-                await fetch(GOOGLE_SCRIPT_URL, {
-                    method: 'POST',
-                    mode: 'no-cors',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(data)
+                // Encode data as URL parameters
+                const params = new URLSearchParams({
+                    action: 'save',
+                    data: JSON.stringify(data)
                 });
                 
-                showToast('✓ Salvestatud Google Sheets\'i!');
+                const response = await fetch(`${GOOGLE_SCRIPT_URL}?${params.toString()}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    showToast('✓ Salvestatud Google Sheets\'i!');
+                } else {
+                    throw new Error(result.message || 'Tundmatu viga');
+                }
             } catch (error) {
                 console.error('Google Sheets error:', error);
                 showToast('⚠ Salvestatud lokaalselt (Google Sheets viga)');
