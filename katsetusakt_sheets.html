@@ -1038,19 +1038,21 @@
             // Save locally
             localStorage.setItem('katsetusakt_mobile', JSON.stringify(data));
             
-            // Send to Google Sheets using GET with params (JSONP workaround)
+            // Send to Google Sheets using POST
             try {
                 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_lgIpAfXxeBGCPa0MqqNaXUWXu92YfgFTc-BEaY6WtBtq5_349rf1YgnDqySNXLuBxQ/exec';
                 
                 showToast('📤 Saadan Google Sheets\'i...');
                 
-                // Encode data as URL parameters
-                const params = new URLSearchParams({
-                    action: 'save',
-                    data: JSON.stringify(data)
+                const response = await fetch(GOOGLE_SCRIPT_URL, {
+                    redirect: 'follow',
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'text/plain;charset=utf-8',
+                    },
+                    body: JSON.stringify(data)
                 });
                 
-                const response = await fetch(`${GOOGLE_SCRIPT_URL}?${params.toString()}`);
                 const result = await response.json();
                 
                 if (result.success) {
