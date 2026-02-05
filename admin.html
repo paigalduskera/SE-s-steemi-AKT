@@ -305,6 +305,9 @@
         </div>
     </div>
 
+    <!-- jsPDF library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
@@ -312,12 +315,12 @@
 
         // Firebase config - ASENDA NEED OMA VÄÄRTUSTEGA!
         const firebaseConfig = {
-            apiKey: "AIzaSyBdwjTXaL3kPlr2yRoHvcMJTR5LUZy0r5c",
-            authDomain: "katsetusakt-keraplast.firebaseapp.com",
-            projectId: "katsetusakt-keraplast",
-            storageBucket: "katsetusakt-keraplast.firebasestorage.app",
-            messagingSenderId: "138381752322",
-            appId: "1:138381752322:web:f73719b94dde4df669cf1b"
+            apiKey: "SINU-API-KEY",
+            authDomain: "SINU-PROJECT.firebaseapp.com",
+            projectId: "SINU-PROJECT-ID",
+            storageBucket: "SINU-PROJECT.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "SINU-APP-ID"
         };
 
         // Initialize Firebase
@@ -482,8 +485,134 @@
         };
 
         // Download PDF (placeholder - will implement next)
-        window.downloadPDF = function(actId) {
-            alert('PDF genereerimine tuleb järgmisena! ID: ' + actId);
+        window.downloadPDF = async function(actId) {
+            try {
+                const act = allActs.find(a => a.id === actId);
+                if (!act) {
+                    alert('Akti ei leitud!');
+                    return;
+                }
+
+                // Parse sejks data
+                const sejks = act.sejksData ? JSON.parse(act.sejksData) : [];
+
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                
+                let y = 20;
+                
+                // Header
+                doc.setFontSize(16);
+                doc.setFont(undefined, 'bold');
+                doc.text('SE SÜSTEEMI KATSETUSAKT', 105, y, { align: 'center' });
+                y += 10;
+                
+                doc.setFontSize(10);
+                doc.setFont(undefined, 'normal');
+                doc.text('Keraplast OÜ | Reg: 12053007', 105, y, { align: 'center' });
+                y += 15;
+                
+                // Basic info
+                doc.setFontSize(11);
+                doc.setFont(undefined, 'bold');
+                doc.text('Töö info:', 15, y);
+                y += 7;
+                
+                doc.setFont(undefined, 'normal');
+                doc.text(`Töö Nr: ${act.workNumber || '-'}`, 15, y);
+                y += 6;
+                doc.text(`Kuupäev: ${act.workDate || '-'}`, 15, y);
+                y += 6;
+                doc.text(`Objekt: ${act.object || '-'}`, 15, y);
+                y += 6;
+                doc.text(`Aadress: ${act.address || '-'}`, 15, y);
+                y += 6;
+                doc.text(`Tellija: ${act.client || '-'}`, 15, y);
+                y += 6;
+                doc.text(`Koostas: ${act.compiler || '-'}`, 15, y);
+                y += 6;
+                doc.text(`Töö liik: ${act.workType || '-'}`, 15, y);
+                y += 6;
+                
+                const statusText = window.getStatusText ? window.getStatusText(act.systemStatus) : act.systemStatus;
+                doc.text(`SE Süsteem: ${statusText || '-'}`, 15, y);
+                y += 10;
+                
+                // SEJKs
+                sejks.forEach((sejk, index) => {
+                    if (y > 250) {
+                        doc.addPage();
+                        y = 20;
+                    }
+                    
+                    doc.setFont(undefined, 'bold');
+                    doc.text(`SEJK ${index + 1}: ${sejk.name || 'Nimetu'}`, 15, y);
+                    y += 7;
+                    
+                    // Groups
+                    if (sejk.grupps && sejk.grupps.length > 0) {
+                        doc.setFont(undefined, 'normal');
+                        doc.setFontSize(9);
+                        
+                        sejk.grupps.forEach((grupp) => {
+                            if (y > 270) {
+                                doc.addPage();
+                                y = 20;
+                            }
+                            
+                            doc.text(`  Grupp: ${grupp.name || '-'}`, 15, y);
+                            y += 5;
+                            doc.text(`    SEL: ${grupp.sel || '-'}  SEA: ${grupp.sea || '-'}  HOC: ${grupp.hoc || '-'}`, 20, y);
+                            y += 5;
+                            doc.text(`    IMCP: ${grupp.imcp || '-'}  MCP: ${grupp.mcp || '-'}  OPUS: ${grupp.opus || '-'}`, 20, y);
+                            y += 5;
+                            doc.text(`    W&R: ${grupp.wr || '-'}  Häire: ${grupp.haire || '-'}  Taastus: ${grupp.taastus || '-'}`, 20, y);
+                            y += 5;
+                            doc.text(`    Asend: ${grupp.asend || '-'}  V-tsoon: ${grupp.vTsoon || '-'}`, 20, y);
+                            y += 5;
+                            doc.text(`    Toide: ${grupp.toide || '-'}  Akud: ${grupp.akud || '-'}  AC/BAT: ${grupp.acbat || '-'}`, 20, y);
+                            y += 5;
+                            doc.text(`    Aku: ${grupp.aku || '-'}`, 20, y);
+                            y += 7;
+                        });
+                        
+                        doc.setFontSize(11);
+                    }
+                    y += 3;
+                });
+                
+                // Notes
+                if (act.notes) {
+                    if (y > 250) {
+                        doc.addPage();
+                        y = 20;
+                    }
+                    doc.setFont(undefined, 'bold');
+                    doc.text('Märkused:', 15, y);
+                    y += 7;
+                    doc.setFont(undefined, 'normal');
+                    const lines = doc.splitTextToSize(act.notes, 180);
+                    doc.text(lines, 15, y);
+                }
+                
+                // Save PDF
+                const filename = `Katsetusakt_${act.workNumber || act.id.substring(0,6)}_${act.workDate || 'kuupaev'}.pdf`;
+                doc.save(filename);
+                
+            } catch (error) {
+                console.error('PDF viga:', error);
+                alert('❌ Viga PDF genereerimisel: ' + error.message);
+            }
+        };
+
+        // Status text converter (same as in form)
+        window.getStatusText = function(statusCode) {
+            const statusMap = {
+                'k': 'Korras',
+                'p': 'Puudub',
+                'o': 'Osaliselt'
+            };
+            return statusMap[statusCode] || statusCode;
         };
 
         // Load acts on page load
