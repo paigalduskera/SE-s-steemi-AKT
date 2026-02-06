@@ -1037,10 +1037,17 @@
         async function saveForm() {
             const data = getFormData();
             
-            // Save locally first (with signature)
+            // Save locally first (with signature and photos)
             localStorage.setItem('katsetusakt_mobile', JSON.stringify(data));
             
-            // Prepare data for Sheets (WITHOUT signature to keep size small)
+            // Prepare data for Sheets (WITHOUT signature and photos to keep size small)
+            const sejksForSheet = data.sejks.map(sejk => ({
+                num: sejk.num,
+                name: sejk.name,
+                photoCount: sejk.photos ? sejk.photos.length : 0, // Just count, not actual photos
+                grupps: sejk.grupps // Keep groups info
+            }));
+            
             const sheetData = {
                 workNumber: data.workNumber,
                 workDate: data.workDate,
@@ -1051,7 +1058,7 @@
                 workType: data.workType,
                 systemStatus: data.systemStatus,
                 notes: data.notes,
-                sejks: data.sejks // Groups info, but no photos/signature
+                sejks: sejksForSheet // Without photos
             };
             
             // Send to Google Sheets
