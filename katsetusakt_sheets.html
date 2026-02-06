@@ -619,7 +619,6 @@
             <div class="status-btns">
                 <button class="work-type-btn active" onclick="selectStatus(this, 'k')">✓ Korras (k)</button>
                 <button class="work-type-btn" onclick="selectStatus(this, 'p')">✗ Puudus (p)</button>
-                <button class="work-type-btn" onclick="selectStatus(this, 'o')">◐ Osaliselt (o)</button>
             </div>
         </div>
     </div>
@@ -864,17 +863,17 @@
                             <div class="field-grid-2">
                                 <div class="field-item">
                                     <label class="field-label">Häire</label>
-                                    <input type="text" class="field-input" placeholder="k">
+                                    <input type="text" class="field-input" value="k">
                                 </div>
                                 <div class="field-item">
                                     <label class="field-label">Taastus</label>
-                                    <input type="text" class="field-input" placeholder="k">
+                                    <input type="text" class="field-input" value="k">
                                 </div>
                             </div>
                             <div class="field-grid-2" style="margin-top: 0.4rem;">
                                 <div class="field-item">
                                     <label class="field-label">Asend</label>
-                                    <input type="text" class="field-input" placeholder="k">
+                                    <input type="text" class="field-input" value="k">
                                 </div>
                                 <div></div>
                             </div>
@@ -885,17 +884,17 @@
                             <div class="field-grid-2">
                                 <div class="field-item">
                                     <label class="field-label">Tsoon</label>
-                                    <input type="text" class="field-input" placeholder="k">
+                                    <input type="text" class="field-input" value="k">
                                 </div>
                                 <div class="field-item">
                                     <label class="field-label">Toide</label>
-                                    <input type="text" class="field-input" placeholder="k">
+                                    <input type="text" class="field-input" value="k">
                                 </div>
                             </div>
                             <div class="field-grid-2" style="margin-top: 0.4rem;">
                                 <div class="field-item">
                                     <label class="field-label">Akud</label>
-                                    <input type="text" class="field-input" placeholder="k">
+                                    <input type="text" class="field-input" value="k">
                                 </div>
                                 <div></div>
                             </div>
@@ -906,7 +905,7 @@
                             <div class="field-grid-2">
                                 <div class="field-item">
                                     <label class="field-label">AC/BAT</label>
-                                    <input type="text" class="field-input" placeholder="k">
+                                    <input type="text" class="field-input" value="k">
                                 </div>
                                 <div class="field-item">
                                     <label class="field-label">Aku</label>
@@ -1111,6 +1110,11 @@
             
             doc.text(`Töö liik: ${data.workType}`, 10, 45);
             doc.text(`Süsteem: ${data.systemStatus}`, 60, 45);
+            
+            // Add legend
+            doc.setFontSize(7);
+            doc.text('Korras: K     Puudub: P', 190, 45);
+            doc.setFontSize(8);
 
             const tableData = [];
             data.sejks.forEach(sejk => {
@@ -1154,18 +1158,24 @@
                 
                 doc.setFontSize(8);
                 doc.text('Tööd on teostatud kokkulepitud mahus ja tingimustel ning Tellijal puuduvad pretensioonid teostatud tööde kohta.', 10, finalY);
-                finalY += 8;
+                finalY += 10;
                 
                 doc.setFontSize(9);
-                doc.text('Allkiri:', 10, finalY);
-                finalY += 5;
+                // Tellija allkiri (vasakul)
+                doc.text('Tellija allkiri:', 10, finalY);
                 
                 try {
-                    doc.addImage(data.signatureImage, 'PNG', 10, finalY, 60, 20);
-                    finalY += 25;
+                    doc.addImage(data.signatureImage, 'PNG', 10, finalY + 3, 60, 20);
                 } catch (e) {
                     console.error('Failed to add signature:', e);
                 }
+                
+                // Koostaja allkiri (paremal)
+                doc.text(`Koostaja allkiri:`, 150, finalY);
+                doc.text(`${data.compiler || ''}`, 150, finalY + 25);
+                doc.line(150, finalY + 23, 210, finalY + 23); // Signature line
+                
+                finalY += 30;
             }
 
             // Add photos
