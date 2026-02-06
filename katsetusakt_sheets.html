@@ -1113,7 +1113,7 @@
             
             // Add legend
             doc.setFontSize(7);
-            doc.text('Korras: K     Puudub: P', 190, 45);
+            doc.text('Korras: K     Puudus: P', 190, 45);
             doc.setFontSize(8);
 
             const tableData = [];
@@ -1158,24 +1158,18 @@
                 
                 doc.setFontSize(8);
                 doc.text('Tööd on teostatud kokkulepitud mahus ja tingimustel ning Tellijal puuduvad pretensioonid teostatud tööde kohta.', 10, finalY);
-                finalY += 10;
+                finalY += 8;
                 
                 doc.setFontSize(9);
-                // Tellija allkiri (vasakul)
-                doc.text('Tellija allkiri:', 10, finalY);
+                doc.text('Allkiri:', 10, finalY);
+                finalY += 5;
                 
                 try {
-                    doc.addImage(data.signatureImage, 'PNG', 10, finalY + 3, 60, 20);
+                    doc.addImage(data.signatureImage, 'PNG', 10, finalY, 60, 20);
+                    finalY += 25;
                 } catch (e) {
                     console.error('Failed to add signature:', e);
                 }
-                
-                // Koostaja allkiri (paremal)
-                doc.text(`Koostaja allkiri:`, 150, finalY);
-                doc.text(`${data.compiler || ''}`, 150, finalY + 25);
-                doc.line(150, finalY + 23, 210, finalY + 23); // Signature line
-                
-                finalY += 30;
             }
 
             // Add photos
