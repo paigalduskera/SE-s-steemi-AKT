@@ -1037,10 +1037,24 @@
         async function saveForm() {
             const data = getFormData();
             
-            // Save locally first
+            // Save locally first (with signature)
             localStorage.setItem('katsetusakt_mobile', JSON.stringify(data));
             
-            // Try to send to Google Sheets
+            // Prepare data for Sheets (WITHOUT signature to keep size small)
+            const sheetData = {
+                workNumber: data.workNumber,
+                workDate: data.workDate,
+                object: data.object,
+                address: data.address,
+                client: data.client,
+                compiler: data.compiler,
+                workType: data.workType,
+                systemStatus: data.systemStatus,
+                notes: data.notes,
+                sejks: data.sejks // Groups info, but no photos/signature
+            };
+            
+            // Send to Google Sheets
             try {
                 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_lgIpAfXxeBGCPa0MqqNaXUWXu92YfgFTc-BEaY6WtBtq5_349rf1YgnDqySNXLuBxQ/exec';
                 
@@ -1048,7 +1062,7 @@
                 
                 const params = new URLSearchParams({
                     action: 'save',
-                    data: JSON.stringify(data)
+                    data: JSON.stringify(sheetData)
                 });
                 
                 const response = await fetch(`${GOOGLE_SCRIPT_URL}?${params.toString()}`);
@@ -1056,13 +1070,13 @@
                 
                 if (result.success) {
                     lastSavedRowNumber = result.rowNumber;
-                    showToast('✓ Salvestatud! (Rida: ' + lastSavedRowNumber + ')');
+                    showToast('✓ Salvestatud Sheets\'i! (Rida: ' + lastSavedRowNumber + ')');
                 } else {
                     throw new Error(result.message || 'Viga');
                 }
             } catch (error) {
                 console.error('Google Sheets error:', error);
-                showToast('✓ Salvestatud lokaalselt');
+                showToast('⚠ Salvestatud ainult lokaalselt');
             }
         }
 
@@ -1187,15 +1201,16 @@
             }
 
             // Generate filename: [Aadress]_[TööNr]_[Kuupäev].pdf
-            const cleanAddress = (data.address || 'aadress').replace(/[^a-zA-Z0-9äöüõÄÖÜÕ]/g, '');
-            const cleanWorkNumber = (data.workNumber || 'tööNr').replace(/[^a-zA-Z0-9]/g, '');
+            // Keep spaces in address for readability
+            const cleanAddress = (data.address || 'aadress').replace(/[\/\\:*?"<>|]/g, ''); // Remove only invalid filename chars
+            const cleanWorkNumber = (data.workNumber || 'tööNr').replace(/[\/\\:*?"<>|]/g, '');
             const dateStr = data.workDate || new Date().toLocaleDateString('et-EE');
             const filename = `${cleanAddress}_${cleanWorkNumber}_${dateStr}.pdf`;
 
             doc.save(filename);
             showToast('✓ PDF eksporditud!');
             
-            // Store PDF for email
+            // Store PDF for possible future use
             window.lastGeneratedPDF = doc.output('dataurlstring');
             window.lastPDFFilename = filename;
         }
