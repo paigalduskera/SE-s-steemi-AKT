@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SE Toote Skanner</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --primary: #0a192f;
+            --secondary: #112240;
+            --accent: #64ffda;
+            --text: #ccd6f6;
+            --text-muted: #8892b0;
+            --bg: #0a192f;
+            --card: #1a2744;
+            --border: #233554;
+            --success: #51cf66;
+            --warning: #ff9f1c;
+            --error: #ff6b6b;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding-bottom: 5rem;
+        }
+        .app-header {
+            background: var(--secondary);
+            padding: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        .title { color: var(--accent); font-size: 1.1rem; font-weight: 600; }
+        .subtitle { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.3rem; }
+        .object-info {
+            padding: 1rem;
+            background: var(--secondary);
+            margin: 1rem;
+            border-radius: 8px;
+        }
+        .info-grid { display: grid; gap: 0.8rem; }
+        .info-field { display: flex; flex-direction: column; gap: 0.3rem; }
+        .info-label {
+            font-size: 0.75rem; color: var(--text-muted);
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .info-input {
+            padding: 0.7rem; background: var(--primary);
+            border: 1px solid var(--border); border-radius: 6px;
+            color: var(--text); font-size: 0.9rem;
+        }
+        .info-input:focus { outline: none; border-color: var(--accent); }
+        .scan-btn {
+            width: calc(100% - 2rem); padding: 1.2rem;
+            background: var(--accent); color: var(--primary);
+            border: none; border-radius: 8px;
+            font-size: 1.1rem; font-weight: 700;
+            cursor: pointer; margin: 0 1rem 1rem 1rem;
+        }
+        .scan-btn.scanning { background: var(--error); }
+        #scanner-container {
+            display: none; margin: 0 1rem 1rem 1rem;
+            border-radius: 8px; overflow: hidden;
+        }
+        #scanner-container.active { display: block; }
+        #reader { width: 100%; }
+        #reader__dashboard { background: var(--secondary) !important; color: var(--text) !important; }
+        #reader__dashboard select, #reader__dashboard button {
+            background: var(--primary) !important; color: var(--text) !important;
+            border: 1px solid var(--border) !important; border-radius: 4px !important;
+        }
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0;
+            width: 100%; height: 100%; background: rgba(0,0,0,0.8);
+            z-index: 1000; justify-content: center; align-items: center;
+        }
+        .modal-overlay.show { display: flex; }
+        .modal {
+            background: var(--secondary); border-radius: 12px;
+            padding: 1.5rem; margin: 1rem; width: 100%; max-width: 400px;
+            border: 2px solid var(--accent);
+        }
+        .modal h3 { color: var(--accent); margin-bottom: 0.5rem; }
+        .modal .barcode-display {
+            font-family: 'Courier New', monospace;
+            color: var(--warning); font-size: 1.1rem;
+            margin-bottom: 1rem; padding: 0.5rem;
+            background: var(--primary); border-radius: 4px; text-align: center;
+        }
+        .modal input {
+            width: 100%; padding: 0.8rem;
+            background: var(--primary); border: 1px solid var(--border);
+            border-radius: 6px; color: var(--text); font-size: 1rem;
+            margin-bottom: 1rem;
+        }
+        .modal input:focus { outline: none; border-color: var(--accent); }
+        .modal-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+        .modal-btn {
+            padding: 0.8rem; border: none; border-radius: 6px;
+            font-size: 0.9rem; font-weight: 600; cursor: pointer;
+        }
+        .modal-btn.confirm { background: var(--accent); color: var(--primary); }
+        .modal-btn.cancel { background: var(--error); color: white; }
+        .products-section {
+            margin: 1rem; background: var(--secondary);
+            border-radius: 8px; padding: 1rem;
+        }
+        .products-header {
+            display: flex; justify-content: space-between;
+            align-items: center; margin-bottom: 0.8rem;
+        }
+        .products-title { color: var(--accent); font-weight: 600; font-size: 1rem; }
+        .products-count {
+            background: var(--accent); color: var(--primary);
+            padding: 0.2rem 0.6rem; border-radius: 12px;
+            font-weight: 700; font-size: 0.85rem;
+        }
+        .product-item {
+            background: var(--card); border-radius: 8px;
+            padding: 0.8rem; margin-bottom: 0.5rem;
+            border: 1px solid var(--border);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .product-info { flex: 1; min-width: 0; }
+        .product-name {
+            font-weight: 600; font-size: 0.95rem;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .product-ean {
+            font-size: 0.75rem; color: var(--text-muted);
+            font-family: 'Courier New', monospace; margin-top: 0.2rem;
+        }
+        .product-qty {
+            display: flex; align-items: center; gap: 0.5rem;
+            flex-shrink: 0; margin-left: 0.8rem;
+        }
+        .qty-btn {
+            width: 36px; height: 36px; border-radius: 50%;
+            border: 2px solid var(--accent); background: transparent;
+            color: var(--accent); font-size: 1.2rem; font-weight: 700;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+        }
+        .qty-btn.minus { border-color: var(--error); color: var(--error); }
+        .qty-value { font-size: 1.2rem; font-weight: 700; min-width: 2rem; text-align: center; }
+        .empty-state { text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.9rem; }
+        .toast {
+            position: fixed; bottom: 6rem; left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--accent); color: var(--primary);
+            padding: 1rem 1.5rem; border-radius: 8px;
+            font-weight: 600; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            opacity: 0; transition: all 0.3s; z-index: 1001; white-space: nowrap;
+        }
+        .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+        .bottom-bar {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            background: var(--secondary); padding: 1rem;
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.3);
+            display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem;
+        }
+        .bar-btn {
+            padding: 0.9rem; border: none; border-radius: 8px;
+            font-size: 0.9rem; font-weight: 600; cursor: pointer;
+        }
+        .bar-btn.primary { background: var(--accent); color: var(--primary); }
+        .bar-btn.secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+    </style>
+</head>
+<body>
+
+<div class="app-header">
+    <div class="title">📦 Toote Skanner</div>
+    <div class="subtitle">Keraplast OÜ | Objekti materjalid</div>
+</div>
+
+<div class="object-info">
+    <div class="info-grid">
+        <div class="info-field">
+            <label class="info-label">Töö Nr</label>
+            <input type="text" class="info-input" id="workNumber" placeholder="nt. 2025-042">
+        </div>
+        <div class="info-field">
+            <label class="info-label">Objekt</label>
+            <input type="text" class="info-input" id="objectName" placeholder="nt. Kristiine Keskus">
+        </div>
+        <div class="info-field">
+            <label class="info-label">Tegija</label>
+            <input type="text" class="info-input" id="workerName" placeholder="nt. Silvar">
+        </div>
+    </div>
+</div>
+
+<button class="scan-btn" id="scanBtn" onclick="toggleScanner()">📷 SCAN BARKOOD</button>
+
+<div id="scanner-container">
+    <div id="reader"></div>
+</div>
+
+<div class="products-section">
+    <div class="products-header">
+        <span class="products-title">Skaneeritud tooted</span>
+        <span class="products-count" id="totalCount">0</span>
+    </div>
+    <div id="productList">
+        <div class="empty-state">Skaneeri barkood, et lisada tooteid</div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="nameModal">
+    <div class="modal">
+        <h3>Uus toode</h3>
+        <div class="barcode-display" id="modalBarcode"></div>
+        <input type="text" id="modalProductName" placeholder="Sisesta toote nimi..." autofocus>
+        <div class="modal-btns">
+            <button class="modal-btn cancel" onclick="cancelNamePrompt()">Tühista</button>
+            <button class="modal-btn confirm" onclick="confirmNamePrompt()">Lisa ✓</button>
+        </div>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="bottom-bar">
+    <button class="bar-btn secondary" onclick="clearProducts()">🗑️ Tühjenda</button>
+    <button class="bar-btn primary" onclick="exportList()">📋 Kopeeri nimekiri</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script>
+    let productDB = JSON.parse(localStorage.getItem('keraplast_product_db') || '{}');
+    let products = [];
+    let html5QrCode = null;
+    let isScanning = false;
+    let pendingBarcode = null;
+
+    function loadProducts() {
+        const workNum = document.getElementById('workNumber').value;
+        if (workNum) {
+            const saved = localStorage.getItem('keraplast_products_' + workNum);
+            if (saved) {
+                products = JSON.parse(saved);
+                renderProducts();
+            }
+        }
+    }
+
+    function saveProducts() {
+        const workNum = document.getElementById('workNumber').value;
+        if (workNum) {
+            localStorage.setItem('keraplast_products_' + workNum, JSON.stringify(products));
+        }
+        localStorage.setItem('keraplast_product_db', JSON.stringify(productDB));
+    }
+
+    document.getElementById('workNumber').addEventListener('change', loadProducts);
+
+    function toggleScanner() {
+        if (isScanning) { stopScanner(); } else { startScanner(); }
+    }
+
+    function startScanner() {
+        const container = document.getElementById('scanner-container');
+        container.classList.add('active');
+        const btn = document.getElementById('scanBtn');
+        btn.textContent = '⏹ PEATA SKANNER';
+        btn.classList.add('scanning');
+
+        html5QrCode = new Html5Qrcode("reader");
+        html5QrCode.start(
+            { facingMode: "environment" },
+            {
+                fps: 10,
+                qrbox: { width: 280, height: 120 },
+                formatsToSupport: [
+                    Html5QrcodeSupportedFormats.EAN_13,
+                    Html5QrcodeSupportedFormats.EAN_8,
+                    Html5QrcodeSupportedFormats.UPC_A,
+                    Html5QrcodeSupportedFormats.UPC_E,
+                    Html5QrcodeSupportedFormats.CODE_128,
+                    Html5QrcodeSupportedFormats.CODE_39
+                ]
+            },
+            onScanSuccess,
+            function() {}
+        ).then(function() {
+            isScanning = true;
+        }).catch(function(err) {
+            console.error('Camera error:', err);
+            showToast('⚠ Kaamera viga');
+            container.classList.remove('active');
+            btn.textContent = '📷 SCAN BARKOOD';
+            btn.classList.remove('scanning');
+        });
+    }
+
+    function stopScanner() {
+        if (html5QrCode && isScanning) {
+            html5QrCode.stop().then(function() {
+                html5QrCode.clear();
+                isScanning = false;
+                document.getElementById('scanner-container').classList.remove('active');
+                var btn = document.getElementById('scanBtn');
+                btn.textContent = '📷 SCAN BARKOOD';
+                btn.classList.remove('scanning');
+            });
+        }
+    }
+
+    var lastScannedCode = '';
+    var lastScannedTime = 0;
+
+    function onScanSuccess(decodedText) {
+        var now = Date.now();
+        if (decodedText === lastScannedCode && now - lastScannedTime < 2000) return;
+        lastScannedCode = decodedText;
+        lastScannedTime = now;
+
+        if (navigator.vibrate) navigator.vibrate(100);
+
+        if (productDB[decodedText]) {
+            addProduct(decodedText, productDB[decodedText]);
+        } else {
+            pendingBarcode = decodedText;
+            document.getElementById('modalBarcode').textContent = decodedText;
+            document.getElementById('modalProductName').value = '';
+            document.getElementById('nameModal').classList.add('show');
+            setTimeout(function() {
+                document.getElementById('modalProductName').focus();
+            }, 100);
+        }
+    }
+
+    function confirmNamePrompt() {
+        var name = document.getElementById('modalProductName').value.trim();
+        if (!name) { showToast('⚠ Sisesta toote nimi'); return; }
+        productDB[pendingBarcode] = name;
+        addProduct(pendingBarcode, name);
+        document.getElementById('nameModal').classList.remove('show');
+        pendingBarcode = null;
+    }
+
+    function cancelNamePrompt() {
+        document.getElementById('nameModal').classList.remove('show');
+        pendingBarcode = null;
+    }
+
+    document.getElementById('modalProductName').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') confirmNamePrompt();
+    });
+
+    function addProduct(ean, name) {
+        var existing = products.find(function(p) { return p.ean === ean; });
+        if (existing) {
+            existing.qty += 1;
+            existing.lastAdded = new Date().toISOString();
+            showToast('+1 → ' + name + ' (' + existing.qty + ' tk)');
+        } else {
+            products.push({
+                ean: ean, name: name, qty: 1,
+                firstAdded: new Date().toISOString(),
+                lastAdded: new Date().toISOString(),
+                addedBy: document.getElementById('workerName').value || '?'
+            });
+            showToast('✓ Lisatud: ' + name);
+        }
+        saveProducts();
+        renderProducts();
+    }
+
+    function changeQty(ean, delta) {
+        var product = products.find(function(p) { return p.ean === ean; });
+        if (!product) return;
+        product.qty += delta;
+        if (product.qty <= 0) {
+            products = products.filter(function(p) { return p.ean !== ean; });
+        }
+        saveProducts();
+        renderProducts();
+    }
+
+    function renderProducts() {
+        var container = document.getElementById('productList');
+        var totalEl = document.getElementById('totalCount');
+        if (products.length === 0) {
+            container.innerHTML = '<div class="empty-state">Skaneeri barkood, et lisada tooteid</div>';
+            totalEl.textContent = '0';
+            return;
+        }
+        var totalItems = products.reduce(function(sum, p) { return sum + p.qty; }, 0);
+        totalEl.textContent = totalItems;
+        container.innerHTML = products.map(function(p) {
+            return '<div class="product-item">' +
+                '<div class="product-info">' +
+                    '<div class="product-name">' + p.name + '</div>' +
+                    '<div class="product-ean">' + p.ean + '</div>' +
+                '</div>' +
+                '<div class="product-qty">' +
+                    '<button class="qty-btn minus" onclick="changeQty(\'' + p.ean + '\', -1)">−</button>' +
+                    '<span class="qty-value">' + p.qty + '</span>' +
+                    '<button class="qty-btn" onclick="changeQty(\'' + p.ean + '\', 1)">+</button>' +
+                '</div>' +
+            '</div>';
+        }).join('');
+    }
+
+    function clearProducts() {
+        if (products.length === 0) return;
+        if (confirm('Kas tühjendada kogu nimekiri?')) {
+            products = [];
+            saveProducts();
+            renderProducts();
+            showToast('✓ Nimekiri tühjendatud');
+        }
+    }
+
+    function exportList() {
+        if (products.length === 0) { showToast('⚠ Nimekiri on tühi'); return; }
+        var workNum = document.getElementById('workNumber').value || '?';
+        var obj = document.getElementById('objectName').value || '?';
+        var text = 'TOOTED | ' + obj + ' | Töö: ' + workNum + '\n';
+        text += 'Kuupäev: ' + new Date().toLocaleDateString('et-EE') + '\n';
+        text += '───────────────────────────────────\n';
+        products.forEach(function(p) {
+            text += p.name + ' — ' + p.qty + ' tk  [' + p.ean + ']\n';
+        });
+        text += '───────────────────────────────────\n';
+        text += 'Kokku: ' + products.reduce(function(s, p) { return s + p.qty; }, 0) + ' tk, ' + products.length + ' nimetust\n';
+
+        navigator.clipboard.writeText(text).then(function() {
+            showToast('✓ Nimekiri kopeeritud!');
+        }).catch(function() {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            showToast('✓ Nimekiri kopeeritud!');
+        });
+    }
+
+    function showToast(message) {
+        var toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.classList.add('show');
+        setTimeout(function() { toast.classList.remove('show'); }, 2000);
+    }
+
+    renderProducts();
+</script>
+</body>
+</html>
