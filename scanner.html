@@ -2,7 +2,7 @@
 <html lang="et">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>SE Toote Skanner</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -21,26 +21,19 @@
         }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            min-height: 100vh;
-            padding-bottom: 5rem;
+            background: var(--bg); color: var(--text);
+            min-height: 100vh; padding-bottom: 5rem;
         }
         .app-header {
-            background: var(--secondary);
-            padding: 1rem;
-            position: sticky;
-            top: 0;
-            z-index: 100;
+            background: var(--secondary); padding: 1rem;
+            position: sticky; top: 0; z-index: 100;
             box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         }
         .title { color: var(--accent); font-size: 1.1rem; font-weight: 600; }
         .subtitle { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.3rem; }
         .object-info {
-            padding: 1rem;
-            background: var(--secondary);
-            margin: 1rem;
-            border-radius: 8px;
+            padding: 1rem; background: var(--secondary);
+            margin: 1rem; border-radius: 8px;
         }
         .info-grid { display: grid; gap: 0.8rem; }
         .info-field { display: flex; flex-direction: column; gap: 0.3rem; }
@@ -54,6 +47,7 @@
             color: var(--text); font-size: 0.9rem;
         }
         .info-input:focus { outline: none; border-color: var(--accent); }
+
         .scan-btn {
             width: calc(100% - 2rem); padding: 1.2rem;
             background: var(--accent); color: var(--primary);
@@ -62,20 +56,66 @@
             cursor: pointer; margin: 0 1rem 1rem 1rem;
         }
         .scan-btn.scanning { background: var(--error); }
-        #scanner-container {
-            display: none; margin: 0 1rem 1rem 1rem;
-            border-radius: 8px; overflow: hidden;
+
+        /* Full-width camera view */
+        .camera-wrapper {
+            display: none; position: relative;
+            margin: 0 1rem 1rem 1rem;
+            border-radius: 12px; overflow: hidden;
+            border: 2px solid var(--accent);
+            background: #000;
         }
-        #scanner-container.active { display: block; }
-        #reader { width: 100%; }
-        #reader__dashboard { background: var(--secondary) !important; color: var(--text) !important; }
-        #reader__dashboard select, #reader__dashboard button {
-            background: var(--primary) !important; color: var(--text) !important;
-            border: 1px solid var(--border) !important; border-radius: 4px !important;
+        .camera-wrapper.active { display: block; }
+        #videoElement {
+            width: 100%; display: block;
         }
+        /* Scan line animation */
+        .scan-overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+        }
+        .scan-region {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 85%; height: 80px;
+            border: 2px solid var(--accent);
+            border-radius: 8px;
+        }
+        .scan-region::before {
+            content: '';
+            position: absolute; top: 0; left: 0; right: 0;
+            height: 2px; background: var(--accent);
+            animation: scanLine 2s linear infinite;
+            box-shadow: 0 0 8px var(--accent);
+        }
+        @keyframes scanLine {
+            0% { top: 0; }
+            50% { top: calc(100% - 2px); }
+            100% { top: 0; }
+        }
+        .scan-hint {
+            position: absolute; bottom: 10px; left: 0; right: 0;
+            text-align: center; color: var(--accent);
+            font-size: 0.8rem; font-weight: 600;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+        }
+        .last-scan-bar {
+            display: none; margin: 0 1rem 0.5rem 1rem;
+            padding: 0.6rem 1rem; background: var(--success);
+            color: white; border-radius: 8px;
+            font-weight: 600; font-size: 0.9rem;
+            animation: fadeInUp 0.3s ease;
+        }
+        .last-scan-bar.show { display: block; }
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
         .modal-overlay {
             display: none; position: fixed; top: 0; left: 0;
-            width: 100%; height: 100%; background: rgba(0,0,0,0.8);
+            width: 100%; height: 100%; background: rgba(0,0,0,0.85);
             z-index: 1000; justify-content: center; align-items: center;
         }
         .modal-overlay.show { display: flex; }
@@ -87,8 +127,8 @@
         .modal h3 { color: var(--accent); margin-bottom: 0.5rem; }
         .modal .barcode-display {
             font-family: 'Courier New', monospace;
-            color: var(--warning); font-size: 1.1rem;
-            margin-bottom: 1rem; padding: 0.5rem;
+            color: var(--warning); font-size: 1.2rem;
+            margin-bottom: 1rem; padding: 0.6rem;
             background: var(--primary); border-radius: 4px; text-align: center;
         }
         .modal input {
@@ -105,6 +145,7 @@
         }
         .modal-btn.confirm { background: var(--accent); color: var(--primary); }
         .modal-btn.cancel { background: var(--error); color: white; }
+
         .products-section {
             margin: 1rem; background: var(--secondary);
             border-radius: 8px; padding: 1rem;
@@ -134,6 +175,9 @@
             font-size: 0.75rem; color: var(--text-muted);
             font-family: 'Courier New', monospace; margin-top: 0.2rem;
         }
+        .product-meta {
+            font-size: 0.7rem; color: var(--text-muted); margin-top: 0.1rem;
+        }
         .product-qty {
             display: flex; align-items: center; gap: 0.5rem;
             flex-shrink: 0; margin-left: 0.8rem;
@@ -147,6 +191,7 @@
         .qty-btn.minus { border-color: var(--error); color: var(--error); }
         .qty-value { font-size: 1.2rem; font-weight: 700; min-width: 2rem; text-align: center; }
         .empty-state { text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.9rem; }
+
         .toast {
             position: fixed; bottom: 6rem; left: 50%;
             transform: translateX(-50%) translateY(100px);
@@ -156,6 +201,7 @@
             opacity: 0; transition: all 0.3s; z-index: 1001; white-space: nowrap;
         }
         .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
         .bottom-bar {
             position: fixed; bottom: 0; left: 0; right: 0;
             background: var(--secondary); padding: 1rem;
@@ -196,9 +242,15 @@
 
 <button class="scan-btn" id="scanBtn" onclick="toggleScanner()">📷 SCAN BARKOOD</button>
 
-<div id="scanner-container">
-    <div id="reader"></div>
+<div class="camera-wrapper" id="cameraWrapper">
+    <video id="videoElement" autoplay playsinline></video>
+    <div class="scan-overlay">
+        <div class="scan-region"></div>
+        <div class="scan-hint">Suuna barkood raamile</div>
+    </div>
 </div>
+
+<div class="last-scan-bar" id="lastScanBar"></div>
 
 <div class="products-section">
     <div class="products-header">
@@ -231,16 +283,18 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <script>
-    let productDB = JSON.parse(localStorage.getItem('keraplast_product_db') || '{}');
-    let products = [];
-    let html5QrCode = null;
-    let isScanning = false;
-    let pendingBarcode = null;
+    var productDB = JSON.parse(localStorage.getItem('keraplast_product_db') || '{}');
+    var products = [];
+    var html5QrCode = null;
+    var isScanning = false;
+    var pendingBarcode = null;
+    var lastScannedCode = '';
+    var lastScannedTime = 0;
 
     function loadProducts() {
-        const workNum = document.getElementById('workNumber').value;
+        var workNum = document.getElementById('workNumber').value;
         if (workNum) {
-            const saved = localStorage.getItem('keraplast_products_' + workNum);
+            var saved = localStorage.getItem('keraplast_products_' + workNum);
             if (saved) {
                 products = JSON.parse(saved);
                 renderProducts();
@@ -249,7 +303,7 @@
     }
 
     function saveProducts() {
-        const workNum = document.getElementById('workNumber').value;
+        var workNum = document.getElementById('workNumber').value;
         if (workNum) {
             localStorage.setItem('keraplast_products_' + workNum, JSON.stringify(products));
         }
@@ -263,35 +317,67 @@
     }
 
     function startScanner() {
-        const container = document.getElementById('scanner-container');
-        container.classList.add('active');
-        const btn = document.getElementById('scanBtn');
+        var wrapper = document.getElementById('cameraWrapper');
+        wrapper.classList.add('active');
+        var btn = document.getElementById('scanBtn');
         btn.textContent = '⏹ PEATA SKANNER';
         btn.classList.add('scanning');
 
-        html5QrCode = new Html5Qrcode("reader");
-        html5QrCode.start(
-            { facingMode: "environment" },
-            {
-                fps: 10,
-                qrbox: { width: 280, height: 120 },
-                formatsToSupport: [
-                    Html5QrcodeSupportedFormats.EAN_13,
-                    Html5QrcodeSupportedFormats.EAN_8,
-                    Html5QrcodeSupportedFormats.UPC_A,
-                    Html5QrcodeSupportedFormats.UPC_E,
-                    Html5QrcodeSupportedFormats.CODE_128,
-                    Html5QrcodeSupportedFormats.CODE_39
-                ]
+        html5QrCode = new Html5Qrcode("videoElement", {
+            useBarCodeDetectorIfSupported: true
+        });
+
+        // Request high resolution camera
+        var config = {
+            fps: 15,
+            qrbox: function(viewfinderWidth, viewfinderHeight) {
+                return {
+                    width: Math.floor(viewfinderWidth * 0.85),
+                    height: Math.floor(viewfinderHeight * 0.3)
+                };
             },
+            aspectRatio: 1.0,
+            formatsToSupport: [
+                Html5QrcodeSupportedFormats.EAN_13,
+                Html5QrcodeSupportedFormats.EAN_8,
+                Html5QrcodeSupportedFormats.UPC_A,
+                Html5QrcodeSupportedFormats.UPC_E,
+                Html5QrcodeSupportedFormats.CODE_128,
+                Html5QrcodeSupportedFormats.CODE_39
+            ]
+        };
+
+        var cameraConfig = {
+            facingMode: "environment"
+        };
+
+        // Try to get high-res camera
+        html5QrCode.start(
+            cameraConfig,
+            config,
             onScanSuccess,
-            function() {}
+            function() {} // ignore scan errors
         ).then(function() {
             isScanning = true;
+            // Try to apply advanced camera settings (focus, zoom)
+            try {
+                var videoTrack = html5QrCode.getRunningTrackSettings();
+                var capabilities = html5QrCode.getRunningTrackCameraCapabilities();
+                if (capabilities && capabilities.zoomFeature && capabilities.zoomFeature().isSupported()) {
+                    // Slight zoom for better barcode reading
+                    capabilities.zoomFeature().apply(2.0);
+                }
+                if (capabilities && capabilities.focusFeature) {
+                    // Continuous autofocus
+                    capabilities.focusFeature().apply("continuous");
+                }
+            } catch(e) {
+                console.log('Advanced camera features not available:', e);
+            }
         }).catch(function(err) {
             console.error('Camera error:', err);
-            showToast('⚠ Kaamera viga');
-            container.classList.remove('active');
+            showToast('⚠ Kaamera viga: ' + err);
+            wrapper.classList.remove('active');
             btn.textContent = '📷 SCAN BARKOOD';
             btn.classList.remove('scanning');
         });
@@ -302,27 +388,35 @@
             html5QrCode.stop().then(function() {
                 html5QrCode.clear();
                 isScanning = false;
-                document.getElementById('scanner-container').classList.remove('active');
+                document.getElementById('cameraWrapper').classList.remove('active');
                 var btn = document.getElementById('scanBtn');
                 btn.textContent = '📷 SCAN BARKOOD';
                 btn.classList.remove('scanning');
+            }).catch(function(err) {
+                console.error('Stop error:', err);
             });
         }
     }
 
-    var lastScannedCode = '';
-    var lastScannedTime = 0;
-
-    function onScanSuccess(decodedText) {
+    function onScanSuccess(decodedText, decodedResult) {
         var now = Date.now();
-        if (decodedText === lastScannedCode && now - lastScannedTime < 2000) return;
+        if (decodedText === lastScannedCode && now - lastScannedTime < 3000) return;
         lastScannedCode = decodedText;
         lastScannedTime = now;
 
-        if (navigator.vibrate) navigator.vibrate(100);
+        // Vibrate
+        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
 
+        // Show last scan bar
+        var bar = document.getElementById('lastScanBar');
+        bar.classList.remove('show');
+        void bar.offsetWidth; // force reflow
+        
         if (productDB[decodedText]) {
             addProduct(decodedText, productDB[decodedText]);
+            bar.textContent = '✓ ' + productDB[decodedText] + ' [' + decodedText + ']';
+            bar.style.background = '#51cf66';
+            bar.classList.add('show');
         } else {
             pendingBarcode = decodedText;
             document.getElementById('modalBarcode').textContent = decodedText;
@@ -330,7 +424,7 @@
             document.getElementById('nameModal').classList.add('show');
             setTimeout(function() {
                 document.getElementById('modalProductName').focus();
-            }, 100);
+            }, 200);
         }
     }
 
@@ -340,6 +434,12 @@
         productDB[pendingBarcode] = name;
         addProduct(pendingBarcode, name);
         document.getElementById('nameModal').classList.remove('show');
+        
+        var bar = document.getElementById('lastScanBar');
+        bar.textContent = '✓ ' + name + ' [' + pendingBarcode + ']';
+        bar.style.background = '#51cf66';
+        bar.classList.add('show');
+        
         pendingBarcode = null;
     }
 
@@ -365,7 +465,7 @@
                 lastAdded: new Date().toISOString(),
                 addedBy: document.getElementById('workerName').value || '?'
             });
-            showToast('✓ Lisatud: ' + name);
+            showToast('✓ ' + name);
         }
         saveProducts();
         renderProducts();
@@ -397,6 +497,7 @@
                 '<div class="product-info">' +
                     '<div class="product-name">' + p.name + '</div>' +
                     '<div class="product-ean">' + p.ean + '</div>' +
+                    '<div class="product-meta">' + p.addedBy + '</div>' +
                 '</div>' +
                 '<div class="product-qty">' +
                     '<button class="qty-btn minus" onclick="changeQty(\'' + p.ean + '\', -1)">−</button>' +
@@ -413,12 +514,12 @@
             products = [];
             saveProducts();
             renderProducts();
-            showToast('✓ Nimekiri tühjendatud');
+            showToast('✓ Tühjendatud');
         }
     }
 
     function exportList() {
-        if (products.length === 0) { showToast('⚠ Nimekiri on tühi'); return; }
+        if (products.length === 0) { showToast('⚠ Nimekiri tühi'); return; }
         var workNum = document.getElementById('workNumber').value || '?';
         var obj = document.getElementById('objectName').value || '?';
         var text = 'TOOTED | ' + obj + ' | Töö: ' + workNum + '\n';
@@ -431,15 +532,13 @@
         text += 'Kokku: ' + products.reduce(function(s, p) { return s + p.qty; }, 0) + ' tk, ' + products.length + ' nimetust\n';
 
         navigator.clipboard.writeText(text).then(function() {
-            showToast('✓ Nimekiri kopeeritud!');
+            showToast('✓ Kopeeritud!');
         }).catch(function() {
             var ta = document.createElement('textarea');
-            ta.value = text;
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
+            ta.value = text; document.body.appendChild(ta);
+            ta.select(); document.execCommand('copy');
             document.body.removeChild(ta);
-            showToast('✓ Nimekiri kopeeritud!');
+            showToast('✓ Kopeeritud!');
         });
     }
 
