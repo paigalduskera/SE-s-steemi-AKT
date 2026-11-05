@@ -1,264 +1,1830 @@
-const PDF_FOLDER_ID = '1VQ293v5y7rpu0HezwmxxhNgOrOUb3PVz';
-const OBJ_SHEET = 'Objektid';
-// Objektid leht: üks grupp = üks rida. Seda tabelit võib käsitsi muuta.
-// Kui Aadress on tühi, kehtib ülemise rea aadress (mugav käsitsi sisestamisel).
-// Hooldusleping: "jah" vähemalt ühel objekti real -> objekt on hooldusgraafikus.
-const OBJ_HEADERS = ['Aadress', 'Objekt', 'Tellija', 'SEJK nr', 'SEJK', 'Grupp', 'SEL', 'SEA', 'HOC', 'iMCP', 'MCP', 'OPUS', 'W&R', 'Hooldusleping'];
-const COL_CONTRACT = 13; // veerg N (0-põhine indeks)
-const COUNT_KEYS = ['sel', 'sea', 'hoc', 'imcp', 'mcp', 'opus', 'wr']; // veerud G..M
+<!DOCTYPE html>
+<html lang="et">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SE Katsetusakt - Hooldus</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-// ---------- Abifunktsioonid ----------
+        :root {
+            --primary: #0a192f;
+            --secondary: #112240;
+            --accent: #64ffda;
+            --text: #ccd6f6;
+            --text-muted: #8892b0;
+            --bg: #0a192f;
+            --card: #1a2744;
+            --border: #233554;
+            --success: #51cf66;
+            --warning: #ff9f1c;
+            --error: #ff6b6b;
+        }
 
-// Aktide leht = alati esimene leht (nagu varem getActiveSheet())
-function actsSheet_() {
-  return SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
-}
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding-bottom: 6rem;
+            max-width: 100vw;
+            overflow-x: hidden;
+        }
 
-// Objektide leht; luuakse automaatselt viimaseks leheks, kui puudub
-function objSheet_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sh = ss.getSheetByName(OBJ_SHEET);
-  // Varasem katseversioon (JSON-veeruga) nimetatakse ümber, et midagi ei kaoks
-  if (sh && sh.getLastRow() > 0 && sh.getRange(1, 1).getValue() === 'Võti') {
-    sh.setName(OBJ_SHEET + ' (vana)');
-    sh = null;
-  }
-  if (!sh) {
-    sh = ss.insertSheet(OBJ_SHEET, ss.getSheets().length);
-    sh.appendRow(OBJ_HEADERS);
-    sh.setFrozenRows(1);
-    sh.getRange(1, 1, 1, OBJ_HEADERS.length).setFontWeight('bold');
-  } else if (sh.getRange(1, COL_CONTRACT + 1).getValue() !== OBJ_HEADERS[COL_CONTRACT]) {
-    // Varasemale lehele lisatakse puuduv veerg "Hooldusleping"
-    sh.getRange(1, COL_CONTRACT + 1).setValue(OBJ_HEADERS[COL_CONTRACT]).setFontWeight('bold');
-  }
-  return sh;
-}
+        .app-header {
+            background: var(--secondary);
+            padding: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
 
-function objKey_(address) {
-  return String(address || '').toLowerCase().replace(/\s+/g, ' ').trim();
-}
+        .title {
+            color: var(--accent);
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
 
-function json_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
-}
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
 
-function isYes_(v) {
-  return /^(jah|j|x|yes|y|1|true|✓)$/i.test(String(v || '').trim());
-}
+        .top-info {
+            padding: 1rem;
+            background: var(--secondary);
+            margin: 1rem;
+            border-radius: 8px;
+        }
 
-function cellText_(v) {
-  if (v instanceof Date) return Utilities.formatDate(v, 'Europe/Tallinn', 'd.M.yyyy');
-  return String(v === null || v === undefined ? '' : v).trim();
-}
+        .info-grid {
+            display: grid;
+            gap: 0.8rem;
+        }
 
-// Loeb objektide lehe: tagastab read koos lahendatud aadressiga
-function readObjRows_() {
-  const sh = objSheet_();
-  const values = sh.getDataRange().getValues();
-  const rows = [];
-  let lastAddr = '';
-  for (let i = 1; i < values.length; i++) {
-    const v = values[i].map(cellText_);
-    if (v.every(x => x === '')) continue;
-    if (v[0]) lastAddr = v[0];
-    if (!lastAddr) continue;
-    rows.push({ rowIndex: i + 1, address: lastAddr, key: objKey_(lastAddr), v: v });
-  }
-  return rows;
-}
+        .info-field {
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+        }
 
-// Viimane hooldus iga aadressi kohta aktide lehelt
-function lastMaintenance_() {
-  const sh = actsSheet_();
-  const values = sh.getDataRange().getValues();
-  const out = {};
-  for (let i = 0; i < values.length; i++) {
-    const r = values[i];
-    const dateStr = cellText_(r[0]);
-    const m = dateStr.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-    if (!m) continue; // päiserida jms
-    const t = new Date(+m[3], +m[2] - 1, +m[1]).getTime();
-    const key = objKey_(r[3]);
-    if (!key) continue;
-    if (!out[key] || t >= out[key].t) {
-      out[key] = { t: t, date: m[1] + '.' + m[2] + '.' + m[3], work: cellText_(r[1]), compiler: cellText_(r[5]) };
-    }
-  }
-  return out;
-}
+        .info-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
 
-function listObjects_() {
-  const rows = readObjRows_();
-  const last = lastMaintenance_();
-  const byKey = {};
-  const order = [];
-  rows.forEach(r => {
-    let o = byKey[r.key];
-    if (!o) {
-      o = byKey[r.key] = { key: r.key, address: r.address, object: '', client: '', contract: false, sejks: [], _sejkIdx: {} };
-      order.push(r.key);
-    }
-    const v = r.v;
-    if (!o.object && v[1]) o.object = v[1];
-    if (!o.client && v[2]) o.client = v[2];
-    if (isYes_(v[COL_CONTRACT])) o.contract = true;
-    const sejkId = (v[3] || '') + '|' + (v[4] || '');
-    if (!v[3] && !v[4] && !v[5]) return; // ainult päiseinfo rida
-    let sj = o._sejkIdx[sejkId];
-    if (!sj) {
-      sj = o._sejkIdx[sejkId] = { nr: v[3], name: v[4], grupps: [] };
-      o.sejks.push(sj);
-    }
-    if (v[5] || COUNT_KEYS.some((k, j) => v[6 + j])) {
-      const g = { name: v[5] };
-      COUNT_KEYS.forEach((k, j) => { g[k] = v[6 + j]; });
-      sj.grupps.push(g);
-    }
-  });
-  return order.map(k => {
-    const o = byKey[k];
-    delete o._sejkIdx;
-    const l = last[k];
-    o.lastDate = l ? l.date : '';
-    o.lastWork = l ? l.work : '';
-    o.compiler = l ? l.compiler : '';
-    return o;
-  });
-}
+        .info-input {
+            padding: 0.7rem;
+            background: var(--primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 0.9rem;
+        }
 
-// Objekti read akti põhjal (kõik read täis aadressiga)
-function objectRows_(data, contract) {
-  const out = [];
-  (data.sejks || []).forEach((s, i) => {
-    const groups = (s.grupps && s.grupps.length) ? s.grupps : [{}];
-    const nr = (s.nr !== undefined && s.nr !== null && String(s.nr).trim() !== '') ? String(s.nr).trim() : String(i + 1);
-    groups.forEach(g => {
-      out.push([data.address || '', data.object || '', data.client || '', nr, s.name || '', g.name || '']
-        .concat(COUNT_KEYS.map(k => (g[k] === undefined || g[k] === null) ? '' : g[k]))
-        .concat([contract || '']));
-    });
-  });
-  if (!out.length) out.push([data.address || '', data.object || '', data.client || '', '', '', ''].concat(COUNT_KEYS.map(() => '')).concat([contract || '']));
-  return out;
-}
+        .info-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
 
-// Asendab objekti read uutega (samas kohas), uus objekt lisatakse lõppu
-function upsertObject_(data) {
-  const key = objKey_(data.address);
-  if (!key) return null;
-  if (!data.sejks || !data.sejks.length) return key; // struktuurita akti puhul tabelit ei muudeta
-  const sh = objSheet_();
-  const existing = readObjRows_().filter(r => r.key === key);
-  const old = existing.length ? existing[0].v : null;
-  if (old) {
-    // Säilita käsitsi sisestatud objekti/tellija nimi, kui aktis see puudub
-    data.object = data.object || old[1];
-    data.client = data.client || old[2];
-  }
-  // Hooldusleping jääb alles, kui see oli objektil märgitud
-  const contractRow = existing.find(r => isYes_(r.v[COL_CONTRACT]));
-  const rows = objectRows_(data, contractRow ? contractRow.v[COL_CONTRACT] : '');
-  let at = sh.getLastRow() + 1;
-  if (existing.length) {
-    const first = existing[0].rowIndex;
-    for (let i = existing.length - 1; i >= 0; i--) sh.deleteRow(existing[i].rowIndex);
-    if (first <= sh.getLastRow()) { sh.insertRowsBefore(first, rows.length); at = first; }
-    else at = sh.getLastRow() + 1;
-  }
-  const need = at + rows.length - 1 - sh.getMaxRows();
-  if (need > 0) sh.insertRowsAfter(sh.getMaxRows(), need);
-  sh.getRange(at, 1, rows.length, OBJ_HEADERS.length).setValues(rows);
-  return key;
-}
+        .work-type-btns {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
 
-// Akti rida aktide lehele (sama veerujärjestus nagu varem)
-function appendAct_(data) {
-  const sheet = actsSheet_();
-  const statusMap = { 'k': 'Korras', 'p': 'Puudub', 'o': 'Osaliselt' };
-  const statusText = statusMap[data.systemStatus] || data.systemStatus || '';
-  const sejkCount = data.sejks ? data.sejks.length : (data.sejkCount || 0);
-  const rowNumber = sheet.getLastRow() + 1;
-  sheet.appendRow([
-    data.workDate || new Date().toLocaleDateString('et-EE'),
-    data.workNumber || '',
-    data.object || '',
-    data.address || '',
-    data.client || '',
-    data.compiler || '',
-    data.workType || '',
-    statusText,
-    data.notes || '',
-    sejkCount,
-    data.pdfFilename || '', // PDF link / failinimi
-    new Date().toLocaleString('et-EE')
-  ]);
-  return rowNumber;
-}
+        .work-type-btn {
+            padding: 0.7rem;
+            background: var(--primary);
+            border: 2px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
 
-// ---------- GET ----------
-function doGet(e) {
-  try {
-    const action = e.parameter.action;
+        .work-type-btn.active {
+            background: var(--accent);
+            color: var(--primary);
+            border-color: var(--accent);
+            font-weight: 600;
+        }
 
-    // Vana vorm (katsetusakt_sheets.html) – töötab edasi nagu enne
-    if (action === 'save') {
-      const data = JSON.parse(e.parameter.data);
-      const rowNumber = appendAct_(data);
-      if (data.sejks && data.sejks.length && data.sejks[0].grupps) upsertObject_(data);
-      return json_({ success: true, message: 'Salvestatud!', rowNumber: rowNumber });
-    }
+        .status-btns {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
 
-    // Objektide nimekiri koos viimase hooldusega
-    if (action === 'objects') {
-      return json_({ success: true, objects: listObjects_() });
-    }
+        .sejk-container {
+            padding: 0 0.8rem 1rem 0.8rem;
+        }
 
-    if (action === 'uploadPDF') {
-      const pdfBase64 = e.parameter.pdfData;
-      const filename = e.parameter.filename || 'Katsetusakt.pdf';
-      const rowNumber = parseInt(e.parameter.rowNumber);
-      const pdfBlob = Utilities.newBlob(Utilities.base64Decode(pdfBase64.split(',')[1]), 'application/pdf', filename);
-      const folder = DriveApp.getFolderById(PDF_FOLDER_ID);
-      const file = folder.createFile(pdfBlob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      const fileUrl = file.getUrl();
-      if (rowNumber > 0) actsSheet_().getRange(rowNumber, 11).setValue(fileUrl);
-      return json_({ success: true, message: 'PDF üles laetud!', url: fileUrl });
-    }
+        .sejk-item {
+            background: var(--secondary);
+            border-radius: 12px;
+            margin-bottom: 0.8rem;
+            border: 2px solid var(--border);
+            overflow: hidden;
+            transition: all 0.3s;
+        }
 
-    return ContentService.createTextOutput('SE Katsetusakt API töötab!');
-  } catch (error) {
-    Logger.log('Error: ' + error.toString());
-    return json_({ success: false, message: error.toString() });
-  }
-}
+        .sejk-item.active {
+            border-color: var(--accent);
+        }
 
-// ---------- POST (uus vorm saadab terve akti, sest URL-i pikkus on piiratud) ----------
-function doPost(e) {
-  const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(20000);
-    const body = JSON.parse(e.postData.contents);
-    const data = body.data || {};
+        .sejk-header {
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+        }
 
-    if (body.action === 'save') {
-      const rowNumber = appendAct_(data);
-      upsertObject_(data);
-      return json_({ success: true, message: 'Salvestatud!', rowNumber: rowNumber });
-    }
+        .sejk-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex: 1;
+        }
 
-    // Objekti struktuuri salvestamine ilma aktita
-    if (body.action === 'saveObject') {
-      const key = upsertObject_(data);
-      return json_({ success: !!key, message: key ? 'Objekt salvestatud!' : 'Aadress puudub' });
-    }
+        .sejk-number {
+            width: 40px;
+            height: 40px;
+            background: var(--accent);
+            color: var(--primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
 
-    return json_({ success: false, message: 'Tundmatu tegevus' });
-  } catch (error) {
-    Logger.log('Error: ' + error.toString());
-    return json_({ success: false, message: error.toString() });
-  } finally {
-    lock.releaseLock();
-  }
-}
+        .sejk-details {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .sejk-nr-input {
+            width: 92px;
+            flex-shrink: 0;
+            background: var(--accent);
+            color: var(--primary);
+            border: none;
+            border-radius: 20px;
+            padding: 0.55rem 0.6rem;
+            font-weight: 700;
+            font-size: 0.95rem;
+            text-align: center;
+        }
+        .sejk-nr-input::placeholder { color: rgba(10, 25, 47, 0.5); }
+        .sejk-name-input::placeholder, .grupp-title-input::placeholder { color: var(--text-muted); font-weight: 400; }
+
+        .sejk-name-input {
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-size: 1rem;
+            font-weight: 600;
+            padding: 0.3rem 0;
+            width: 100%;
+        }
+
+        .sejk-name-input:focus {
+            outline: 1px solid var(--accent);
+            border-radius: 4px;
+            padding: 0.3rem 0.5rem;
+        }
+
+        .sejk-status {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.2rem;
+        }
+
+        .chevron {
+            font-size: 1.2rem;
+            transition: transform 0.3s;
+            color: var(--accent);
+        }
+
+        .sejk-item.active .chevron {
+            transform: rotate(180deg);
+        }
+
+        .sejk-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .sejk-item.active .sejk-content {
+            max-height: 10000px;
+        }
+
+        .sejk-body {
+            padding: 0 1rem 1rem 1rem;
+        }
+
+        .photo-section {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+        }
+
+        .photo-btn {
+            padding: 0.7rem 1rem;
+            background: var(--success);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .delete-sejk-btn {
+            padding: 0.7rem 1rem;
+            background: var(--error);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .photo-preview {
+            width: 60px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 2px solid var(--accent);
+            cursor: pointer;
+        }
+
+        .grupp-accordion {
+            background: var(--card);
+            border-radius: 8px;
+            margin-bottom: 0.8rem;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        .grupp-header {
+            padding: 0.8rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            background: var(--card);
+        }
+
+        .grupp-accordion.active .grupp-header {
+            background: var(--border);
+        }
+
+        .grupp-title-input {
+            background: transparent;
+            border: none;
+            color: var(--accent);
+            font-weight: 600;
+            font-size: 0.9rem;
+            flex: 1;
+            padding: 0.3rem;
+        }
+
+        .grupp-title-input:focus {
+            outline: 1px solid var(--accent);
+            border-radius: 4px;
+        }
+
+        .grupp-body {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+            padding: 0 0.8rem;
+        }
+
+        .grupp-accordion.active .grupp-body {
+            max-height: 5000px;
+            padding: 0.8rem;
+        }
+
+        .field-section {
+            margin-bottom: 0.8rem;
+        }
+
+        .section-title {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.25rem;
+        }
+
+        .field-grid-2 {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.4rem;
+        }
+
+        .field-grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.35rem;
+        }
+
+        .field-grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.3rem;
+        }
+
+        .field-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+        }
+
+        .field-label {
+            font-size: 0.6rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            line-height: 1;
+        }
+
+        .field-input {
+            padding: 0.5rem 0.1rem;
+            background: var(--primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-size: 0.8rem;
+            text-align: center;
+            font-family: 'Courier New', monospace;
+            min-height: 34px;
+            box-sizing: border-box;
+        }
+
+        .field-input.wide {
+            text-align: left;
+        }
+
+        .field-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(100, 255, 218, 0.1);
+        }
+
+        .add-grupp-btn {
+            width: 100%;
+            padding: 0.8rem;
+            background: transparent;
+            border: 2px dashed var(--accent);
+            color: var(--accent);
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-top: 0.5rem;
+        }
+
+        .delete-grupp-btn {
+            width: 100%;
+            padding: 0.6rem;
+            background: transparent;
+            border: 1px solid var(--error);
+            color: var(--error);
+            border-radius: 6px;
+            font-size: 0.85rem;
+            margin-top: 0.8rem;
+        }
+
+        .bottom-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--secondary);
+            padding: 1rem;
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.3);
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.8rem;
+        }
+
+        .btn {
+            padding: 0.9rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--primary);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .fab {
+            position: fixed;
+            bottom: 6rem;
+            right: 1rem;
+            width: 56px;
+            height: 56px;
+            background: var(--accent);
+            color: var(--primary);
+            border: none;
+            border-radius: 50%;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 12px rgba(100, 255, 218, 0.4);
+            z-index: 100;
+        }
+
+        .obj-row { display: flex; gap: 0.5rem; margin-top: 0.3rem; }
+        .obj-row select { flex: 1; }
+        .obj-btn {
+            background: var(--card, #1a2744); color: var(--text); border: 1px solid var(--border);
+            border-radius: 6px; padding: 0 0.9rem; font-size: 1rem; cursor: pointer;
+        }
+        .plan-btn {
+            width: 100%; margin-top: 0.7rem; padding: 0.8rem; border-radius: 8px; border: 1px solid var(--accent);
+            background: transparent; color: var(--accent); font-weight: 600; font-size: 0.9rem; cursor: pointer;
+        }
+        .obj-info { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; }
+        .planner {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000;
+            padding: 1rem; overflow-y: auto;
+        }
+        .planner.show { display: block; }
+        .planner-box { background: var(--secondary); border-radius: 10px; padding: 1rem; max-width: 640px; margin: 0 auto; }
+        .planner-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem; }
+        #planSearch { width: 100%; }
+        .plan-legend { font-size: 0.72rem; color: var(--text-muted); margin: 0.6rem 0; display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+        .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-left: 0.4rem; }
+        .dot.red { background: #ff6b6b; } .dot.orange { background: #ff9f1c; } .dot.green { background: #51cf66; } .dot.gray { background: #8892b0; }
+        .dot.none { background: transparent; border: 1px solid var(--text-muted); }
+        .plan-group { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0.8rem 0 0.2rem; }
+        .plan-list { display: flex; flex-direction: column; gap: 0.4rem; }
+        .plan-item {
+            display: flex; gap: 0.7rem; align-items: center; padding: 0.7rem; border-radius: 8px;
+            background: var(--primary); border: 1px solid var(--border); cursor: pointer;
+        }
+        .plan-item input { width: 20px; height: 20px; flex-shrink: 0; }
+        .plan-main { flex: 1; min-width: 0; }
+        .plan-addr { font-weight: 600; font-size: 0.9rem; }
+        .plan-sub { font-size: 0.75rem; color: var(--text-muted); }
+        .planner-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; gap: 1rem; }
+        .planner-foot .btn { flex: 1; }
+
+        .toast {
+            position: fixed;
+            bottom: 8rem;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--accent);
+            color: var(--primary);
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 600;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            opacity: 0;
+            transition: all 0.3s;
+            z-index: 1001;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+
+        .photo-modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .photo-modal.show {
+            display: flex;
+        }
+
+        .photo-modal img {
+            max-width: 95%;
+            max-height: 95%;
+            border-radius: 8px;
+        }
+
+        .photo-modal-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: var(--accent);
+            font-size: 40px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .signature-section {
+            padding: 1rem;
+            background: var(--secondary);
+            margin: 1rem;
+            border-radius: 8px;
+        }
+
+        .signature-canvas {
+            width: 100%;
+            height: 150px;
+            background: var(--primary);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            cursor: crosshair;
+            touch-action: none;
+        }
+
+        .signature-controls {
+            margin-top: 0.5rem;
+        }
+
+        .btn-clear-sig {
+            width: 100%;
+            padding: 0.6rem;
+            background: var(--error);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+
+        .notes-section {
+            padding: 1rem;
+            background: var(--secondary);
+            margin: 1rem;
+            border-radius: 8px;
+        }
+
+        .notes-textarea {
+            width: 100%;
+            min-height: 100px;
+            padding: 0.8rem;
+            background: var(--primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.9rem;
+            resize: vertical;
+        }
+
+        .notes-textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+    <div class="app-header">
+        <div class="title">SE Süsteemi Katsetusakt</div>
+        <div class="subtitle">Keraplast OÜ | Reg: 12053007</div>
+    </div>
+
+    <div class="top-info">
+        <label class="info-label">Objekt registrist</label>
+        <div class="obj-row">
+            <select id="objSelect" class="info-input" onchange="loadObject(this.value)">
+                <option value="">— Uus objekt —</option>
+            </select>
+            <button class="obj-btn" onclick="fetchObjects(true)" title="Värskenda">⟳</button>
+        </div>
+        <button class="plan-btn" onclick="openPlanner()">📅 Päeva plaan ja print</button>
+        <div id="objInfo" class="obj-info"></div>
+    </div>
+
+    <div class="top-info">
+        <div class="info-grid">
+            <div class="info-field">
+                <label class="info-label">Töö Nr</label>
+                <input type="text" class="info-input" id="workNumber" placeholder="">
+            </div>
+            <div class="info-field">
+                <label class="info-label">Kuupäev</label>
+                <input type="text" class="info-input" id="workDate" value="">
+            </div>
+            <div class="info-field">
+                <label class="info-label">Objekt</label>
+                <input type="text" class="info-input" id="object" placeholder="">
+            </div>
+            <div class="info-field">
+                <label class="info-label">Aadress</label>
+                <input type="text" class="info-input" id="address" placeholder="">
+            </div>
+            <div class="info-field">
+                <label class="info-label">Tellija</label>
+                <input type="text" class="info-input" id="client" placeholder="">
+            </div>
+            <div class="info-field">
+                <label class="info-label">Koostas</label>
+                <input type="text" class="info-input" id="compiler" placeholder="">
+            </div>
+        </div>
+
+        <div style="margin-top: 1rem;">
+            <label class="info-label">Töö liik</label>
+            <div class="work-type-btns">
+                <button class="work-type-btn" onclick="selectWorkType(this, 'Paigaldus')">Paigaldus</button>
+                <button class="work-type-btn active" onclick="selectWorkType(this, 'Hooldus')">Hooldus</button>
+                <button class="work-type-btn" onclick="selectWorkType(this, 'Remont')">Remont</button>
+                <button class="work-type-btn" onclick="selectWorkType(this, 'Ülevaatus')">Ülevaatus</button>
+            </div>
+        </div>
+
+        <div style="margin-top: 1rem;">
+            <label class="info-label">SE Süsteem töökorras</label>
+            <div class="status-btns">
+                <button class="work-type-btn active" onclick="selectStatus(this, 'k')">✓ Korras (k)</button>
+                <button class="work-type-btn" onclick="selectStatus(this, 'p')">✗ Puudus (p)</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="sejk-container" id="sejkContainer">
+        <!-- SEJK items will be added here -->
+    </div>
+
+    <div class="notes-section">
+        <label class="info-label">Märkused</label>
+        <textarea class="notes-textarea" id="notes" placeholder="Täiendavad märkused..."></textarea>
+    </div>
+
+    <div class="signature-section">
+        <label class="info-label" style="margin-bottom: 0.5rem; display: block;">Allkiri</label>
+        <canvas id="signatureCanvas" class="signature-canvas"></canvas>
+        <div class="signature-controls">
+            <button class="btn-clear-sig" onclick="clearSignature()">🗑️ Tühista allkiri</button>
+        </div>
+        <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.8rem;">
+            Tööd on teostatud kokkulepitud mahus ja tingimustel ning Tellijal puuduvad pretensioonid teostatud tööde kohta.
+        </p>
+    </div>
+
+    <button class="fab" onclick="addSejk()">+</button>
+
+    <div class="bottom-bar">
+        <button class="btn btn-primary" onclick="exportBlankPDF()" style="width: 100%;">🖨️ Prindi blankett</button>
+        <button class="btn btn-success" onclick="exportPDF()" style="width: 100%;">📄 Genereeri AKT</button>
+    </div>
+
+    <div class="planner" id="planner">
+        <div class="planner-box">
+            <div class="planner-head">
+                <div class="title">Päeva plaan</div>
+                <button class="obj-btn" onclick="closePlanner()">✕</button>
+            </div>
+            <input type="text" id="planSearch" class="info-input" placeholder="Otsi aadressi või objekti..." oninput="renderPlanner()">
+            <div class="plan-legend">
+                <span class="dot red"></span>Tähtaeg ületatud (3 kuud)
+                <span class="dot orange"></span>Varsti (alla 2 nädala)
+                <span class="dot green"></span>Korras
+                <span class="dot gray"></span>Hooldust pole tehtud
+            </div>
+            <div id="planList" class="plan-list"></div>
+            <div class="planner-foot">
+                <span id="planCount">0 valitud</span>
+                <button class="btn btn-success" onclick="printDay()">🖨️ Prindi valitud</button>
+            </div>
+            <div class="planner-foot">
+                <span class="plan-sub">Uus objekt või varuks:</span>
+                <button class="btn btn-primary" onclick="printEmpty()">📄 Tühi blankett</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <div class="photo-modal" id="photoModal" onclick="closePhotoModal()">
+        <span class="photo-modal-close">&times;</span>
+        <img id="modalPhoto" src="">
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <script>
+        // Set current date
+        document.getElementById('workDate').value = new Date().toLocaleDateString('et-EE');
+
+        let sejkCounter = 0;
+        let selectedWorkType = 'Hooldus';
+        let selectedStatus = 'k';
+
+        // Signature canvas setup
+        const canvas = document.getElementById('signatureCanvas');
+        const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+
+        function resizeCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            ctx.strokeStyle = '#64ffda';
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function getCoordinates(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX || e.touches[0].clientX) - rect.left;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+            return { x, y };
+        }
+
+        function startDrawing(e) {
+            e.preventDefault();
+            isDrawing = true;
+            const coords = getCoordinates(e);
+            lastX = coords.x;
+            lastY = coords.y;
+        }
+
+        function draw(e) {
+            e.preventDefault();
+            if (!isDrawing) return;
+            
+            const coords = getCoordinates(e);
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(coords.x, coords.y);
+            ctx.stroke();
+            
+            lastX = coords.x;
+            lastY = coords.y;
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+        }
+
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+        canvas.addEventListener('touchstart', startDrawing);
+        canvas.addEventListener('touchmove', draw);
+        canvas.addEventListener('touchend', stopDrawing);
+
+        function clearSignature() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function getSignatureData() {
+            return canvas.toDataURL('image/png');
+        }
+
+        function selectWorkType(btn, type) {
+            document.querySelectorAll('.work-type-btns .work-type-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            selectedWorkType = type;
+        }
+
+        function selectStatus(btn, status) {
+            document.querySelectorAll('.status-btns .work-type-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            selectedStatus = status;
+        }
+
+        // Järgmine keskuse tähis eelmise järgi: "SLK 1" -> "SLK 2", muidu "SEJK n"
+        function nextSejkNr() {
+            const all = document.querySelectorAll('.sejk-nr-input');
+            const last = all.length ? all[all.length - 1].value.trim() : '';
+            const m = last.match(/^(.*?)(\d+)\s*$/);
+            if (m) return m[1] + (parseInt(m[2], 10) + 1);
+            return 'SEJK ' + (all.length + 1);
+        }
+
+        function addSejk(opts = {}) {
+            const autoGroup = opts.autoGroup !== false;
+            sejkCounter++;
+            const sejkId = `sejk-${sejkCounter}`;
+            
+            const sejkHtml = `
+                <div class="sejk-item" id="${sejkId}" data-sejk-num="${sejkCounter}">
+                    <div class="sejk-header" onclick="toggleSejk('${sejkId}')">
+                        <div class="sejk-info">
+                            <input type="text" class="sejk-nr-input" value="${escapeHtml(opts.nr !== undefined ? opts.nr : nextSejkNr())}"
+                                   onclick="event.stopPropagation()" placeholder="SEJK nr" title="Keskuse tähis (nt SEJK 1, SLK 1)">
+                            <div class="sejk-details">
+                                <input type="text" class="sejk-name-input" value=""
+                                       onclick="event.stopPropagation()" placeholder="Juhtimiskeskus, nt SVL 48-15">
+                                <div class="sejk-status">0 gruppi</div>
+                            </div>
+                        </div>
+                        <div class="chevron">▼</div>
+                    </div>
+                    <div class="sejk-content">
+                        <div class="sejk-body">
+                            <div class="photo-section">
+                                <button class="photo-btn" onclick="addPhoto('${sejkId}')">📷 Lisa pilt</button>
+                                <button class="delete-sejk-btn" onclick="deleteSejk('${sejkId}')">🗑️ Kustuta SEJK</button>
+                                <input type="file" id="photo-${sejkId}" accept="image/*" onchange="handlePhoto('${sejkId}', event)" multiple>
+                                <div id="photos-${sejkId}" style="display: flex; gap: 0.5rem; flex-wrap: wrap;"></div>
+                            </div>
+                            <div id="grupp-container-${sejkId}"></div>
+                            <button class="add-grupp-btn" onclick="addGrupp('${sejkId}')">+ Lisa grupp</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('sejkContainer').insertAdjacentHTML('beforeend', sejkHtml);
+            
+            if (!autoGroup) {
+                // Ehitatakse registrist: grupid lisab kutsuja
+                if (opts.name) document.querySelector(`#${sejkId} .sejk-name-input`).value = opts.name;
+                return sejkId;
+            }
+            // Auto-open and add first group
+            setTimeout(() => {
+                document.getElementById(sejkId).classList.add('active');
+                addGrupp(sejkId);
+            }, 100);
+            
+            showToast('✓ SEJK lisatud');
+            return sejkId;
+        }
+
+        function toggleSejk(sejkId) {
+            const item = document.getElementById(sejkId);
+            item.classList.toggle('active');
+        }
+
+        function deleteSejk(sejkId) {
+            if (confirm('Kas kustutada SEJK koos kõigi gruppidega?')) {
+                document.getElementById(sejkId).remove();
+                showToast('✓ SEJK kustutatud');
+            }
+        }
+
+        let gruppCounter = 0;
+
+        function addGrupp(sejkId) {
+            gruppCounter++;
+            const gruppId = `grupp-${gruppCounter}`;
+            const container = document.getElementById(`grupp-container-${sejkId}`);
+            const gruppNum = container.querySelectorAll('.grupp-accordion').length + 1;
+            
+            const gruppHtml = `
+                <div class="grupp-accordion active" id="${gruppId}">
+                    <div class="grupp-header" onclick="toggleGrupp('${gruppId}')">
+                        <input type="text" class="grupp-title-input" value="" data-default="Grupp ${gruppNum}" 
+                               onclick="event.stopPropagation()" placeholder="Grupp ${gruppNum} - tsoon, nt SE 2.1L2">
+                        <div>▼</div>
+                    </div>
+                    <div class="grupp-body">
+                        <div class="field-section">
+                            <div class="section-title">Seadmed</div>
+                            <div class="field-grid-2">
+                                <div class="field-item">
+                                    <label class="field-label">SEL</label>
+                                    <input type="number" class="field-input" placeholder="">
+                                </div>
+                                <div class="field-item">
+                                    <label class="field-label">SEA</label>
+                                    <input type="number" class="field-input" placeholder="">
+                                </div>
+                            </div>
+                            <div class="field-grid-2" style="margin-top: 0.4rem;">
+                                <div class="field-item">
+                                    <label class="field-label">HOC</label>
+                                    <input type="number" class="field-input" placeholder="">
+                                </div>
+                                <div class="field-item">
+                                    <label class="field-label">iMCP</label>
+                                    <input type="number" class="field-input" placeholder="">
+                                </div>
+                            </div>
+                            <div class="field-grid-2" style="margin-top: 0.4rem;">
+                                <div class="field-item">
+                                    <label class="field-label">MCP</label>
+                                    <input type="number" class="field-input" placeholder="">
+                                </div>
+                                <div class="field-item">
+                                    <label class="field-label">OPUS</label>
+                                    <input type="number" class="field-input" placeholder="">
+                                </div>
+                            </div>
+                            <div class="field-grid-2" style="margin-top: 0.4rem;">
+                                <div class="field-item">
+                                    <label class="field-label">W&R</label>
+                                    <input type="number" class="field-input" placeholder="">
+                                </div>
+                                <div></div>
+                            </div>
+                        </div>
+
+                        <div class="field-section">
+                            <div class="section-title">Test</div>
+                            <div class="field-grid-2">
+                                <div class="field-item">
+                                    <label class="field-label">Häire</label>
+                                    <input type="text" class="field-input" value="k">
+                                </div>
+                                <div class="field-item">
+                                    <label class="field-label">Taastus</label>
+                                    <input type="text" class="field-input" value="k">
+                                </div>
+                            </div>
+                            <div class="field-grid-2" style="margin-top: 0.4rem;">
+                                <div class="field-item">
+                                    <label class="field-label">Asend</label>
+                                    <input type="text" class="field-input" value="k">
+                                </div>
+                                <div></div>
+                            </div>
+                        </div>
+
+                        <div class="field-section">
+                            <div class="section-title">Vead</div>
+                            <div class="field-grid-2">
+                                <div class="field-item">
+                                    <label class="field-label">Tsoon</label>
+                                    <input type="text" class="field-input" value="k">
+                                </div>
+                                <div class="field-item">
+                                    <label class="field-label">Toide</label>
+                                    <input type="text" class="field-input" value="k">
+                                </div>
+                            </div>
+                            <div class="field-grid-2" style="margin-top: 0.4rem;">
+                                <div class="field-item">
+                                    <label class="field-label">Akud</label>
+                                    <input type="text" class="field-input" value="k">
+                                </div>
+                                <div class="field-item">
+                                    <label class="field-label">AC/BAT</label>
+                                    <input type="text" class="field-input" value="k">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="field-section">
+                            <div class="section-title">Mõõtmine</div>
+                            <div class="field-grid-2">
+                                <div class="field-item">
+                                    <label class="field-label">Aku</label>
+                                    <input type="text" class="field-input" placeholder="">
+                                </div>
+                                <div></div>
+                            </div>
+                        </div>
+
+                        <button class="delete-grupp-btn" onclick="deleteGrupp('${gruppId}', '${sejkId}')">✕ Kustuta grupp</button>
+                    </div>
+                </div>
+            `;
+            
+            container.insertAdjacentHTML('beforeend', gruppHtml);
+            updateSejkStatus(sejkId);
+        }
+
+        function toggleGrupp(gruppId) {
+            const item = document.getElementById(gruppId);
+            item.classList.toggle('active');
+        }
+
+        function deleteGrupp(gruppId, sejkId) {
+            if (confirm('Kas kustutada grupp?')) {
+                document.getElementById(gruppId).remove();
+                updateSejkStatus(sejkId);
+                showToast('✓ Grupp kustutatud');
+            }
+        }
+
+        function updateSejkStatus(sejkId) {
+            const container = document.getElementById(`grupp-container-${sejkId}`);
+            const gruppCount = container.querySelectorAll('.grupp-accordion').length;
+            const statusEl = document.querySelector(`#${sejkId} .sejk-status`);
+            statusEl.textContent = `${gruppCount} grupp${gruppCount !== 1 ? 'i' : ''}`;
+        }
+
+        function addPhoto(sejkId) {
+            document.getElementById(`photo-${sejkId}`).click();
+        }
+
+        function handlePhoto(sejkId, event) {
+            const files = event.target.files;
+            const container = document.getElementById(`photos-${sejkId}`);
+            
+            Array.from(files).forEach(file => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    img.className = 'photo-preview';
+                    img.onclick = () => showPhotoModal(e.target.result);
+                    container.appendChild(img);
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function showPhotoModal(src) {
+            const modal = document.getElementById('photoModal');
+            const modalImg = document.getElementById('modalPhoto');
+            modal.classList.add('show');
+            modalImg.src = src;
+        }
+
+        function closePhotoModal() {
+            document.getElementById('photoModal').classList.remove('show');
+        }
+
+        function getFormData() {
+            const sejks = [];
+            document.querySelectorAll('.sejk-item').forEach(sejkEl => {
+                const sejkNum = sejkEl.dataset.sejkNum;
+                const sejkName = sejkEl.querySelector('.sejk-name-input').value;
+                const sejkNr = sejkEl.querySelector('.sejk-nr-input').value.trim();
+                const photoContainer = sejkEl.querySelector(`#photos-sejk-${sejkNum}`);
+                const photos = photoContainer ? Array.from(photoContainer.querySelectorAll('img')).map(img => img.src) : [];
+                
+                const grupps = [];
+                sejkEl.querySelectorAll('.grupp-accordion').forEach(gruppEl => {
+                    const inputs = gruppEl.querySelectorAll('.field-input');
+                    grupps.push({
+                        name: gruppEl.querySelector('.grupp-title-input').value.trim() || gruppEl.querySelector('.grupp-title-input').dataset.default || '',
+                        sel: inputs[0].value,
+                        sea: inputs[1].value,
+                        hoc: inputs[2].value,
+                        imcp: inputs[3].value,
+                        mcp: inputs[4].value,
+                        opus: inputs[5].value,
+                        wr: inputs[6].value,
+                        haire: inputs[7].value,
+                        taastus: inputs[8].value,
+                        asend: inputs[9].value,
+                        vTsoon: inputs[10].value,
+                        toide: inputs[11].value,
+                        akud: inputs[12].value,
+                        acbat: inputs[13].value,
+                        aku: inputs[14].value
+                    });
+                });
+                
+                sejks.push({
+                    num: sejkNum,
+                    nr: sejkNr,
+                    name: sejkName,
+                    photos: photos,
+                    grupps: grupps
+                });
+            });
+
+            return {
+                workNumber: document.getElementById('workNumber').value,
+                workDate: document.getElementById('workDate').value,
+                object: document.getElementById('object').value,
+                address: document.getElementById('address').value,
+                client: document.getElementById('client').value,
+                compiler: document.getElementById('compiler').value,
+                workType: selectedWorkType,
+                systemStatus: selectedStatus,
+                notes: document.getElementById('notes').value,
+                signatureImage: getSignatureData(),
+                sejks: sejks,
+                timestamp: new Date().toISOString()
+            };
+        }
+
+        let lastSavedRowNumber = null;
+
+        async function saveForm() {
+            const data = getFormData();
+            
+            // Save locally first (with signature and photos)
+            localStorage.setItem('katsetusakt_mobile', JSON.stringify(data));
+            
+            // Prepare data for Sheets (WITHOUT signature and photos to keep size small)
+            const sejksForSheet = data.sejks.map(sejk => ({
+                num: sejk.num,
+                name: sejk.name,
+                photoCount: sejk.photos ? sejk.photos.length : 0, // Just count, not actual photos
+                grupps: sejk.grupps // Keep groups info
+            }));
+            
+            const sheetData = {
+                workNumber: data.workNumber,
+                workDate: data.workDate,
+                object: data.object,
+                address: data.address,
+                client: data.client,
+                compiler: data.compiler,
+                workType: data.workType,
+                systemStatus: data.systemStatus,
+                notes: data.notes,
+                sejks: sejksForSheet // Without photos
+            };
+            
+            // Send to Google Sheets
+            try {
+                const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_lgIpAfXxeBGCPa0MqqNaXUWXu92YfgFTc-BEaY6WtBtq5_349rf1YgnDqySNXLuBxQ/exec';
+                
+                showToast('📤 Saadan Google Sheets\'i...');
+                
+                const params = new URLSearchParams({
+                    action: 'save',
+                    data: JSON.stringify(sheetData)
+                });
+                
+                const response = await fetch(`${GOOGLE_SCRIPT_URL}?${params.toString()}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    lastSavedRowNumber = result.rowNumber;
+                    showToast('✓ Salvestatud Sheets\'i! (Rida: ' + lastSavedRowNumber + ')');
+                } else {
+                    throw new Error(result.message || 'Viga');
+                }
+            } catch (error) {
+                console.error('Google Sheets error:', error);
+                showToast('⚠ Salvestatud ainult lokaalselt');
+            }
+        }
+
+        function exportPDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('l', 'mm', 'a4');
+            const data = getFormData();
+
+            // Save locally first
+            localStorage.setItem('katsetusakt_mobile', JSON.stringify(data));
+
+            // Keraplasti colors - softer red
+            const keraplastRed = [237, 106, 94]; // Softer red #ED6A5E
+            const keraplastGray = [102, 102, 102]; // Gray #666666
+            const lightGray = [245, 245, 245]; // Very light gray background
+            
+            // Add Keraplast logo
+            
+            // Add Keraplast logo as TEXT (simpler and more reliable)
+            doc.setFontSize(16);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(keraplastRed[0], keraplastRed[1], keraplastRed[2]);
+            doc.text('KERAPLAST', 10, 14);
+            
+            doc.setFontSize(7);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(keraplastGray[0], keraplastGray[1], keraplastGray[2]);
+            doc.text('ESTONIA', 10, 18);
+            
+            
+            doc.setFontSize(14);
+            doc.setTextColor(keraplastGray[0], keraplastGray[1], keraplastGray[2]);
+            doc.text('SE SÜSTEEMI KATSETUSAKT', 148, 15, { align: 'center' });
+            
+            doc.setFontSize(8);
+            doc.setTextColor(0, 0, 0);
+            doc.text(`Töö Nr: ${data.workNumber}`, 10, 25);
+            doc.text(`Kuupäev: ${data.workDate}`, 10, 30);
+            doc.text(`Töövõtja: Keraplast OÜ, Reg: 12053007`, 10, 35);
+            
+            doc.text(`Objekt: ${data.object}`, 100, 25);
+            doc.text(`Aadress: ${data.address}`, 100, 30);
+            doc.text(`Tellija: ${data.client}`, 100, 35);
+            
+            doc.text(`Koostas: ${data.compiler}`, 190, 25);
+            doc.text(`Kontrollis: Silvar Pippar: 220790`, 190, 30);
+            
+            doc.text(`Töö liik: ${data.workType}`, 10, 45);
+            doc.text(`Süsteem: ${data.systemStatus}`, 60, 45);
+            
+            // Add legend
+            doc.setFontSize(7);
+            doc.text('Korras: K     Puudus: P', 190, 45);
+            doc.setFontSize(8);
+
+            const tableData = [];
+            data.sejks.forEach(sejk => {
+                tableData.push([sejk.nr || sejk.num, sejk.name, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', sejk.photos.length > 0 ? `📷 ${sejk.photos.length}` : '']);
+                sejk.grupps.forEach(grupp => {
+                    tableData.push(['', grupp.name, grupp.sel, grupp.sea, grupp.hoc, grupp.imcp, grupp.mcp, grupp.opus, grupp.wr, grupp.haire, grupp.taastus, grupp.asend, grupp.vTsoon, grupp.toide, grupp.akud, grupp.acbat, grupp.aku, '']);
+                });
+            });
+
+            doc.autoTable({
+                startY: 50,
+                head: [['#', 'SE juhtimiskeskus / Grupp', 'SEL', 'SEA', 'HOC', 'iMCP', 'MCP', 'OPUS', 'W&R', 'Häire', 'Taastus', 'Asend', 'Tsoon', 'Toide', 'Akud', 'AC/BAT', 'Aku', 'Pildid']],
+                body: tableData,
+                styles: { fontSize: 7, cellPadding: 1 },
+                headStyles: { fillColor: keraplastGray, textColor: [255, 255, 255] },
+                didParseCell: function(data) {
+                    if (data.row.index >= 0 && tableData[data.row.index][0] !== '') {
+                        data.cell.styles.fillColor = [255, 240, 240]; // Very light red
+                        data.cell.styles.textColor = keraplastGray;
+                        data.cell.styles.fontStyle = 'bold';
+                    }
+                }
+            });
+
+            let finalY = doc.lastAutoTable.finalY + 10;
+
+            if (data.notes) {
+                doc.setFontSize(9);
+                doc.text('Märkused:', 10, finalY);
+                doc.setFontSize(7);
+                const splitNotes = doc.splitTextToSize(data.notes, 270);
+                doc.text(splitNotes, 10, finalY + 5);
+                finalY += splitNotes.length * 4 + 10;
+            }
+
+            if (data.signatureImage) {
+                if (finalY > 160) {
+                    doc.addPage();
+                    finalY = 20;
+                }
+                
+                doc.setFontSize(8);
+                doc.text('Tööd on teostatud kokkulepitud mahus ja tingimustel ning Tellijal puuduvad pretensioonid teostatud tööde kohta.', 10, finalY);
+                finalY += 8;
+                
+                doc.setFontSize(9);
+                doc.text('Allkiri:', 10, finalY);
+                finalY += 5;
+                
+                try {
+                    doc.addImage(data.signatureImage, 'PNG', 10, finalY, 60, 20);
+                    finalY += 25;
+                } catch (e) {
+                    console.error('Failed to add signature:', e);
+                }
+            }
+
+            // Add photos
+            const sejksWithPhotos = data.sejks.filter(sejk => sejk.photos && sejk.photos.length > 0);
+            if (sejksWithPhotos.length > 0) {
+                doc.addPage();
+                doc.setFontSize(12);
+                doc.text('Fotodokumentatsioon', 10, 15);
+                
+                let y = 25;
+                sejksWithPhotos.forEach(sejk => {
+                    if (y > 180) {
+                        doc.addPage();
+                        y = 15;
+                    }
+                    
+                    doc.setFontSize(9);
+                    doc.text(`${[sejk.nr, sejk.name].filter(Boolean).join(' – ')}:`, 10, y);
+                    y += 5;
+                    
+                    let x = 10;
+                    sejk.photos.forEach((photo) => {
+                        if (x > 250) {
+                            x = 10;
+                            y += 45;
+                            if (y > 180) {
+                                doc.addPage();
+                                y = 15;
+                            }
+                        }
+                        
+                        try {
+                            doc.addImage(photo, 'JPEG', x, y, 40, 40);
+                            x += 45;
+                        } catch (e) {
+                            console.error('Failed to add image:', e);
+                        }
+                    });
+                    
+                    y += 45;
+                });
+            }
+
+            // Generate filename: [Aadress]_[TööNr]_[Kuupäev].pdf
+            const cleanAddress = (data.address || 'aadress').replace(/[\/\\:*?"<>|]/g, '');
+            const cleanWorkNumber = (data.workNumber || 'tööNr').replace(/[\/\\:*?"<>|]/g, '');
+            const dateStr = data.workDate || new Date().toLocaleDateString('et-EE');
+            const filename = `${cleanAddress}_${cleanWorkNumber}_${dateStr}.pdf`;
+
+            doc.save(filename);
+            showToast('✓ PDF salvestatud!');
+            
+            // Send to Google Sheets (only basic data + filename)
+            saveActFull(data, filename);
+        }
+
+        async function sendToSheets(data, pdfFilename) {
+            try {
+                const sheetData = {
+                    workNumber: data.workNumber || '',
+                    workDate: data.workDate || '',
+                    object: data.object || '',
+                    address: data.address || '',
+                    client: data.client || '',
+                    compiler: data.compiler || '',
+                    workType: data.workType || '',
+                    systemStatus: data.systemStatus || '',
+                    notes: data.notes || '',
+                    sejkCount: data.sejks.length,
+                    pdfFilename: pdfFilename
+                };
+                
+                const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_lgIpAfXxeBGCPa0MqqNaXUWXu92YfgFTc-BEaY6WtBtq5_349rf1YgnDqySNXLuBxQ/exec';
+                
+                const params = new URLSearchParams({
+                    action: 'save',
+                    data: JSON.stringify(sheetData)
+                });
+                
+                // Simple fetch with timeout - works better on iPhone
+                const fetchPromise = fetch(`${GOOGLE_SCRIPT_URL}?${params.toString()}`, {
+                    method: 'GET',
+                    mode: 'no-cors' // Important for iPhone compatibility
+                });
+                
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('timeout')), 10000)
+                );
+                
+                await Promise.race([fetchPromise, timeoutPromise]);
+                
+                // With no-cors we can't read response, so assume success
+                showToast('✓ Andmed salvestatud!');
+                
+            } catch (error) {
+                console.error('Sheets error:', error);
+                // Silently fail - PDF is already saved
+            }
+        }
+
+        // ===== Käsitsi täidetav blankett =====
+        // Pealeht: päis + 2 juhtimiskeskust (kuni 6 gruppi) + märkused + allkiri.
+        // Jätkuleht: lühipäis + 3 juhtimiskeskust. Veergude järjekord sama mis digiaktil.
+        // Tühi blankett = pealeht + 1 jätkuleht (jätkulehte prinditakse vajadusel mitu).
+        // Kui vormis on keskused/grupid sisestatud, trükitakse need ette ja lehed jagatakse automaatselt.
+        // Joonistab ühe objekti blanketi olemasolevasse dokumenti (vajadusel uuelt lehelt).
+        function drawBlank(doc, data, opts = {}) {
+            if (opts.newPage) doc.addPage();
+            const firstPage = doc.getNumberOfPages();
+            const red = [237, 106, 94];
+            const gray = [102, 102, 102];
+            const line = [150, 150, 150];
+            const MAX_GRUPP = 6, FIRST_N = 2, NEXT_N = 3;
+            const ROW_H = 7.5, SEJK_H = 7;
+
+            const field = (label, value, x, y, w) => {
+                doc.setFontSize(8);
+                doc.setTextColor(0, 0, 0);
+                doc.text(label, x, y);
+                const lx = x + doc.getTextWidth(label) + 1.5;
+                doc.setDrawColor(...line);
+                doc.setLineWidth(0.2);
+                doc.line(lx, y + 1, x + w, y + 1);
+                if (value) doc.text(String(value), lx + 1, y);
+            };
+            const box = (x, y, label) => {
+                doc.setDrawColor(0, 0, 0);
+                doc.setLineWidth(0.3);
+                doc.rect(x, y - 3.2, 3.8, 3.8);
+                doc.setFontSize(8);
+                doc.text(label, x + 5.2, y);
+                return x + 5.2 + doc.getTextWidth(label) + 5;
+            };
+            const logo = (size) => {
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(size);
+                doc.setTextColor(...red);
+                doc.text('KERAPLAST', 10, 14);
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(7);
+                doc.setTextColor(...gray);
+                doc.text('ESTONIA', 10, 18);
+            };
+
+            // --- Andmed: keskused plokkideks ---
+            const defSejk = n => /^\s*(Sejk \d+)?\s*$/.test(n || '');
+            const defGrupp = n => /^\s*(Grupp \d+ - SE1\.\d+L2)?\s*$/.test(n || '');
+            const formSejks = data.sejks.map(s => ({ ...s, name: defSejk(s.name) ? '' : s.name }));
+            const blankLayout = formSejks.every(s => !s.name && s.grupps.every(g => defGrupp(g.name)));
+
+            let blocks; // [{ num, name, grupps: [nimi...] }]
+            if (blankLayout) {
+                blocks = Array.from({ length: FIRST_N + NEXT_N }, () => ({ num: '', name: '', grupps: Array(MAX_GRUPP).fill({ name: '' }) }));
+            } else {
+                blocks = formSejks.map((s, i) => {
+                    const g = s.grupps.map(x => ({ ...x, name: x.name || '' }));
+                    if (g.length < MAX_GRUPP) g.push({ name: '' }); // varurida
+                    return { num: s.nr || String(i + 1), name: s.name, grupps: g };
+                });
+            }
+            const pages = [blocks.slice(0, FIRST_N)];
+            for (let i = FIRST_N; i < blocks.length; i += NEXT_N) pages.push(blocks.slice(i, i + NEXT_N));
+            const total = pages.length;
+            const extra = total - 1;
+
+            const head = [
+                [
+                    { content: '', colSpan: 2 },
+                    { content: 'Seadmed (tk)', colSpan: 7 },
+                    { content: 'Test', colSpan: 3 },
+                    { content: 'Vead', colSpan: 4 },
+                    { content: 'Mõõtmine', colSpan: 1 },
+                    { content: '' }
+                ],
+                ['#', 'SE juhtimiskeskus / Grupp', 'SEL', 'SEA', 'HOC', 'iMCP', 'MCP', 'OPUS', 'W&R',
+                 'Häire', 'Taastus', 'Asend', 'Tsoon', 'Toide', 'Akud', 'AC/BAT', 'Aku', 'Pildid']
+            ];
+            const colStyles = { 0: { cellWidth: 15, halign: 'center' }, 1: { cellWidth: 54 }, 16: { cellWidth: 16 }, 17: { cellWidth: 12 } };
+            for (let c = 2; c <= 15; c++) colStyles[c] = { cellWidth: 12.5, halign: 'center' };
+            const groupStart = new Set([2, 9, 12, 16, 17]);
+
+            const drawTable = (pageBlocks, startY) => {
+                const body = [], sejkRows = new Set();
+                pageBlocks.forEach(b => {
+                    const r = Array(18).fill('');
+                    r[0] = b.num; r[1] = b.name;
+                    sejkRows.add(body.length);
+                    body.push(r);
+                    b.grupps.forEach(g => {
+                        const gr = Array(18).fill('');
+                        gr[1] = g.name || '';
+                        // Seadmete arv registrist/vormist (SEL..W&R)
+                        ['sel', 'sea', 'hoc', 'imcp', 'mcp', 'opus', 'wr'].forEach((k, j) => { gr[2 + j] = g[k] || ''; });
+                        body.push(gr);
+                    });
+                });
+                doc.autoTable({
+                    startY, head, body,
+                    theme: 'grid',
+                    margin: { left: 10, right: 10, top: 10, bottom: 5 },
+                    pageBreak: 'avoid',
+                    styles: { fontSize: 8, cellPadding: 1, minCellHeight: ROW_H, valign: 'middle', lineColor: line, lineWidth: 0.2, textColor: [0, 0, 0], overflow: 'ellipsize' },
+                    headStyles: { fillColor: gray, textColor: [255, 255, 255], halign: 'center', minCellHeight: 6, fontSize: 7.5 },
+                    columnStyles: colStyles,
+                    didParseCell: d => {
+                        if (d.section !== 'body') return;
+                        const i = d.row.index;
+                        if (sejkRows.has(i)) {
+                            d.cell.styles.fillColor = [255, 240, 240];
+                            d.cell.styles.fontStyle = 'bold';
+                            d.cell.styles.minCellHeight = SEJK_H;
+                        } else if (d.column.index >= 9 && d.column.index <= 15 && i % 2 === 0) {
+                            d.cell.styles.fillColor = [248, 248, 248];
+                        }
+                    },
+                    didDrawCell: d => {
+                        if (groupStart.has(d.column.index)) {
+                            doc.setDrawColor(60, 60, 60);
+                            doc.setLineWidth(0.6);
+                            doc.line(d.cell.x, d.cell.y, d.cell.x, d.cell.y + d.cell.height);
+                        }
+                    }
+                });
+                return doc.lastAutoTable.finalY;
+            };
+
+            // ===== PEALEHT =====
+            logo(16);
+            doc.setFontSize(14);
+            doc.text('SE SÜSTEEMI KATSETUSAKT', 148, 15, { align: 'center' });
+            field('Töö Nr:', data.workNumber, 10, 26, 80);
+            field('Kuupäev:', opts.date || '', 10, 33, 80);
+            doc.setFontSize(8);
+            doc.text('Töövõtja: Keraplast OÜ, Reg: 12053007', 10, 40);
+            field('Objekt:', data.object, 100, 26, 78);
+            field('Aadress:', data.address, 100, 33, 78);
+            field('Tellija:', data.client, 100, 40, 78);
+            field('Koostas:', data.compiler, 190, 26, 97);
+            doc.setFontSize(8);
+            doc.text('Kontrollis: Silvar Pippar: 220790', 190, 33);
+            field('Leht 1 /', blankLayout ? '' : String(total), 190, 40, 30);
+
+            let x = 10;
+            doc.setFontSize(8);
+            doc.text('Töö liik:', x, 48);
+            x += 14;
+            ['Paigaldus', 'Hooldus', 'Remont', 'Ülevaatus'].forEach(t => { x = box(x, 48, t); });
+            x += 8;
+            doc.text('Süsteem:', x, 48);
+            x += 15;
+            x = box(x, 48, 'k');
+            box(x, 48, 'p');
+            doc.setFontSize(7);
+            doc.text('Korras: K     Puudus: P', 190, 48);
+
+            let y = drawTable(pages[0], 52);
+
+            // Märkused + kinnitus + allkiri (alati pealehel)
+            y += 5;
+            doc.setFontSize(9);
+            doc.setTextColor(0, 0, 0);
+            doc.text('Märkused:', 10, y);
+            doc.setDrawColor(...line);
+            doc.setLineWidth(0.2);
+            doc.line(27, y + 1, 287, y + 1);
+            doc.line(10, y + 7, 287, y + 7);
+            y += 13;
+            doc.setFontSize(8);
+            doc.text('Tööd on teostatud kokkulepitud mahus ja tingimustel ning Tellijal puuduvad pretensioonid teostatud tööde kohta.', 10, y);
+            y += 8;
+            field('Allkiri:', '', 10, y, 110);
+            field('Lisalehti:', blankLayout ? '' : String(extra), 190, y, 30);
+
+            // ===== JÄTKULEHED =====
+            pages.slice(1).forEach((pb, i) => {
+                doc.addPage();
+                logo(12);
+                doc.setFontSize(11);
+                doc.setTextColor(...gray);
+                doc.text('SE SÜSTEEMI KATSETUSAKT · JÄTKULEHT', 148, 14, { align: 'center' });
+                field('Töö Nr:', data.workNumber, 10, 24, 80);
+                field('Objekt:', data.object, 95, 24, 75);
+                field(blankLayout ? 'Leht' : `Leht ${i + 2} /`, blankLayout ? '' : String(total), 180, 24, blankLayout ? 45 : 35);
+                if (blankLayout) { doc.setFontSize(8); doc.text('/', 205, 24); }
+                field('Allkiri:', '', 235, 24, 52); // iga jätkuleht allkirjastatakse
+                drawTable(pb, 28);
+            });
+
+            for (let p = firstPage; p <= doc.getNumberOfPages(); p++) {
+                doc.setPage(p);
+                doc.setFontSize(6.5);
+                doc.setTextColor(...gray);
+                doc.text('Keraplast OÜ · SE süsteemi katsetusakt (käsitsi täidetav, kantakse digitaalsele aktile samas järjekorras)', 148, 206, { align: 'center' });
+            }
+
+        }
+
+        function exportBlankPDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('l', 'mm', 'a4');
+            const data = getFormData();
+            drawBlank(doc, data);
+            const nr = (data.workNumber || '').replace(/[\/\\:*?"<>|]/g, '');
+            doc.save(nr ? `Blankett_${nr}.pdf` : 'Blankett_tyhi.pdf');
+            showToast('✓ Blankett salvestatud');
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2000);
+        }
+
+        // ===== Objektide register (Google Sheets leht "Objektid") =====
+        const API_URL = 'https://script.google.com/macros/s/AKfycbw_lgIpAfXxeBGCPa0MqqNaXUWXu92YfgFTc-BEaY6WtBtq5_349rf1YgnDqySNXLuBxQ/exec';
+        const OBJ_CACHE = 'se_objektid';
+        const PERIOD_MONTHS = 3;  // kord kvartalis
+        const SOON_DAYS = 14;     // hoiatus enne tähtaega
+        let objects = [];
+        let planSelected = new Set();
+
+        function objKey(address) {
+            return String(address || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        }
+
+        function parseEtDate(str) {
+            const m = String(str || '').match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+            return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null;
+        }
+
+        function dueInfo(o) {
+            const d = parseEtDate(o.lastDate);
+            if (!o.contract) return { cls: 'none', text: 'Hooldusleping puudub' + (o.lastDate ? ` · viimati ${o.lastDate}` : ''), days: -1 };
+            if (!d) return { cls: 'gray', text: 'Hooldust pole registreeritud', days: 99999 };
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            const days = Math.round((today - d) / 86400000);
+            const due = new Date(d); due.setMonth(due.getMonth() + PERIOD_MONTHS);
+            const left = Math.round((due - today) / 86400000);
+            if (left < 0) return { cls: 'red', text: `Viimati ${o.lastDate} · ${-left} p üle tähtaja`, days };
+            if (left <= SOON_DAYS) return { cls: 'orange', text: `Viimati ${o.lastDate} · tähtajani ${left} p`, days };
+            return { cls: 'green', text: `Viimati ${o.lastDate} · tähtajani ${left} p`, days };
+        }
+
+        function populateObjSelect() {
+            const sel = document.getElementById('objSelect');
+            const cur = sel.value;
+            const sorted = [...objects].sort((a, b) => (a.address || '').localeCompare(b.address || '', 'et'));
+            sel.innerHTML = '<option value="">— Uus objekt —</option>' +
+                sorted.map(o => `<option value="${escapeHtml(o.key)}">${escapeHtml(o.address)}${o.object ? ' – ' + escapeHtml(o.object) : ''}</option>`).join('');
+            sel.value = cur;
+        }
+
+        function escapeHtml(t) {
+            return String(t || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        async function fetchObjects(manual) {
+            // Esmalt vahemälu (töötab ka ilma internetita)
+            try { objects = JSON.parse(localStorage.getItem(OBJ_CACHE) || '[]'); } catch (e) { objects = []; }
+            populateObjSelect();
+            try {
+                const res = await fetch(`${API_URL}?action=objects`);
+                const json = await res.json();
+                if (json.success) {
+                    objects = json.objects || [];
+                    try { localStorage.setItem(OBJ_CACHE, JSON.stringify(objects)); } catch (e) {}
+                    populateObjSelect();
+                    if (manual) showToast(`✓ ${objects.length} objekti laaditud`);
+                }
+            } catch (e) {
+                console.error('Objektide laadimine:', e);
+                if (manual) showToast('⚠ Võrguühendus puudub, kasutan salvestatud nimekirja');
+            }
+        }
+
+        // Täidab vormi registri objektiga: päis + keskused + grupid + seadmete arv. Testid jäävad "k".
+        function fillFormFromObject(o) {
+            document.getElementById('object').value = o.object || '';
+            document.getElementById('address').value = o.address || '';
+            document.getElementById('client').value = o.client || '';
+            document.getElementById('workNumber').value = '';
+            document.getElementById('notes').value = '';
+            const container = document.getElementById('sejkContainer');
+            container.innerHTML = '';
+            sejkCounter = 0;
+            (o.sejks || []).forEach(sj => {
+                const sejkId = addSejk({ autoGroup: false, name: sj.name, nr: sj.nr || '' });
+                (sj.grupps || []).forEach(g => {
+                    addGrupp(sejkId);
+                    const gEls = document.querySelectorAll(`#grupp-container-${sejkId} .grupp-accordion`);
+                    const gEl = gEls[gEls.length - 1];
+                    gEl.classList.remove('active');
+                    gEl.querySelector('.grupp-title-input').value = g.name || '';
+                    const inputs = gEl.querySelectorAll('.field-input');
+                    ['sel', 'sea', 'hoc', 'imcp', 'mcp', 'opus', 'wr'].forEach((k, i) => { inputs[i].value = g[k] || ''; });
+                });
+            });
+            if (!(o.sejks || []).length) addSejk();
+        }
+
+        // "— Uus objekt —": tühi vorm uue objekti jaoks
+        function resetForm() {
+            ['workNumber', 'object', 'address', 'client', 'notes'].forEach(id => { document.getElementById(id).value = ''; });
+            document.getElementById('workDate').value = new Date().toLocaleDateString('et-EE');
+            document.getElementById('sejkContainer').innerHTML = '';
+            sejkCounter = 0;
+            clearSignature();
+            addSejk();
+        }
+
+        function printEmpty() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('l', 'mm', 'a4');
+            drawBlank(doc, { sejks: [] });
+            doc.save('Blankett_tyhi.pdf');
+            showToast('✓ Tühi blankett salvestatud');
+        }
+
+        function loadObject(key) {
+            const info = document.getElementById('objInfo');
+            if (!key) { info.textContent = ''; resetForm(); return; }
+            const o = objects.find(x => x.key === key);
+            if (!o) return;
+            fillFormFromObject(o);
+            info.textContent = dueInfo(o).text;
+            showToast('✓ Objekt laaditud');
+        }
+
+        // Salvestab terve akti (ilma piltide ja allkirjata) -> aktide leht + objektide register
+        async function saveActFull(data, pdfFilename) {
+            const payload = {
+                action: 'save',
+                data: {
+                    workNumber: data.workNumber, workDate: data.workDate, object: data.object,
+                    address: data.address, client: data.client, compiler: data.compiler,
+                    workType: data.workType, systemStatus: data.systemStatus, notes: data.notes,
+                    pdfFilename: pdfFilename,
+                    sejks: data.sejks.map(s => ({ num: s.num, nr: s.nr, name: s.name, photoCount: s.photos.length, grupps: s.grupps }))
+                }
+            };
+            // Kohalik register kohe ajakohaseks (järgmine kord töötab ka võrguta)
+            const key = objKey(data.address);
+            if (key) {
+                const rec = {
+                    key, address: data.address, object: data.object, client: data.client,
+                    sejks: payload.data.sejks.map(s => ({ nr: s.nr, name: s.name, grupps: s.grupps.map(g => ({
+                        name: g.name, sel: g.sel, sea: g.sea, hoc: g.hoc, imcp: g.imcp, mcp: g.mcp, opus: g.opus, wr: g.wr })) })),
+                    lastDate: data.workDate, lastWork: data.workNumber, compiler: data.compiler
+                };
+                const i = objects.findIndex(o => o.key === key);
+                if (i >= 0) objects[i] = rec; else objects.push(rec);
+                try { localStorage.setItem(OBJ_CACHE, JSON.stringify(objects)); } catch (e) {}
+                populateObjSelect();
+            }
+            try {
+                // text/plain = lihtpäring, töötab Apps Scriptiga ka iPhone'is
+                await fetch(API_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
+                showToast('✓ Akt ja objekt salvestatud');
+            } catch (e) {
+                console.error('Salvestamine:', e);
+                showToast('⚠ Sheetsi saatmine ebaõnnestus (PDF on salvestatud)');
+            }
+        }
+
+        // ----- Päeva plaan -----
+        function openPlanner() {
+            document.getElementById('planner').classList.add('show');
+            renderPlanner();
+            fetchObjects().then(renderPlanner);
+        }
+        function closePlanner() { document.getElementById('planner').classList.remove('show'); }
+
+        function planItem({ o, due }) {
+            return `
+                <label class="plan-item">
+                    <input type="checkbox" data-key="${escapeHtml(o.key)}" ${planSelected.has(o.key) ? 'checked' : ''} onchange="togglePlan(this.dataset.key, this.checked)">
+                    <span class="dot ${due.cls}"></span>
+                    <div class="plan-main">
+                        <div class="plan-addr">${escapeHtml(o.address)}</div>
+                        <div class="plan-sub">${escapeHtml(o.object)}${o.client ? ' · ' + escapeHtml(o.client) : ''} · ${(o.sejks || []).length} SEJK</div>
+                        <div class="plan-sub">${due.text}</div>
+                    </div>
+                </label>`;
+        }
+
+        function renderPlanner() {
+            const q = (document.getElementById('planSearch').value || '').toLowerCase();
+            const all = objects
+                .filter(o => !q || `${o.address} ${o.object} ${o.client}`.toLowerCase().includes(q))
+                .map(o => ({ o, due: dueInfo(o) }));
+            // Lepinguga objektid: kõige kauem hooldamata ees. Lepinguta: tähestiku järgi, eraldi plokis.
+            const withC = all.filter(x => x.o.contract).sort((a, b) => b.due.days - a.due.days);
+            const noC = all.filter(x => !x.o.contract).sort((a, b) => (a.o.address || '').localeCompare(b.o.address || '', 'et'));
+            let html = withC.map(planItem).join('');
+            if (noC.length) html += `<div class="plan-group">Ilma hoolduslepinguta (${noC.length})</div>` + noC.map(planItem).join('');
+            document.getElementById('planList').innerHTML = html ||
+                '<div class="plan-sub">Objekte pole veel. Objekt lisandub registrisse esimese akti salvestamisel.</div>';
+            document.getElementById('planCount').textContent = `${planSelected.size} valitud`;
+        }
+        function togglePlan(key, on) {
+            if (on) planSelected.add(key); else planSelected.delete(key);
+            document.getElementById('planCount').textContent = `${planSelected.size} valitud`;
+        }
+
+        // Üks PDF kõigi valitud objektide eeltäidetud blankettidega
+        function printDay() {
+            const chosen = objects.filter(o => planSelected.has(o.key));
+            if (!chosen.length) { showToast('⚠ Vali vähemalt üks objekt'); return; }
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('l', 'mm', 'a4');
+            const today = new Date().toLocaleDateString('et-EE');
+            const compiler = document.getElementById('compiler').value;
+            chosen.forEach((o, i) => {
+                drawBlank(doc, {
+                    workNumber: '', object: o.object, address: o.address, client: o.client, compiler,
+                    sejks: (o.sejks || []).map((s, j) => ({ num: j + 1, nr: s.nr, name: s.name, photos: [], grupps: s.grupps || [] }))
+                }, { newPage: i > 0, date: today });
+            });
+            doc.save(`Paeva_aktid_${today}.pdf`);
+            showToast(`✓ ${chosen.length} akti prinditud`);
+        }
+
+        // Add first SEJK on load
+        addSejk();
+        fetchObjects();
+    </script>
+</body>
+</html>
