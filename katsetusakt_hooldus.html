@@ -1904,6 +1904,8 @@
             const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '', blankrows: true });
             const r0 = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).s.r : 0;
             const xlRow = i => r0 + i + 1; // Exceli rea number teadeteks
+            const c0 = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).s.c : 0;
+            const A1 = (i, c) => (i >= 0 && c >= 0) ? XLSX.utils.encode_cell({ r: r0 + i, c: c0 + c }) : ''; // lahter värvimiseks
             const txt = v => (v instanceof Date) ? v.toLocaleDateString('et-EE') : String(v === null || v === undefined ? '' : v).trim();
             const norm = v => txt(v).toLowerCase().replace(/\s+/g, ' ');
             const num = v => {
@@ -1914,7 +1916,7 @@
             const has = v => txt(v) !== '';
             const fmt = (v, d = 2) => (Math.round(v * 10 ** d) / 10 ** d).toString().replace('.', ',');
             const checks = [];
-            const add = (level, text) => checks.push({ level, text });
+            const add = (level, text, cells) => checks.push({ level, text, cells: (cells || []).filter(Boolean) });
 
             // --- päiserida ja veerud pealkirja järgi
             const hr = rows.findIndex(r => r.some(c => norm(c) === 'se tsooni number'));
@@ -1966,23 +1968,23 @@
             meta.fireExpert = after(/^vastutav spetsialist/i);
             meta.compiledBy = after(/^koostas/i);
             meta.fireClass = after(/^tuleohutusklass/i);
-            const versions = new Set();
+            const versions = new Set(), versionCells = [];
             for (const r of top) for (const c of r) {
                 if (/^v\d+$/i.test(txt(c))) meta.version = txt(c);
                 if (c instanceof Date) meta.date = c.toLocaleDateString('et-EE');
-                if (/^v\d+$/i.test(txt(c))) versions.add(txt(c).toLowerCase());
+                if (/^v\d+$/i.test(txt(c))) { versions.add(txt(c).toLowerCase()); versionCells.push(A1(top.indexOf(r), r.indexOf(c))); }
             }
             const tv = meta.title.match(/\bv\d{1,3}\b/i); // versioon pealkirjas (nt "... tabel v01")
-            if (tv) versions.add(tv[0].toLowerCase());
+            if (tv) { versions.add(tv[0].toLowerCase()); versionCells.push(A1(0, 0)); }
 
             // --- kontroll: versioon ja kuupäev (dokumendi haldus)
-            if (versions.size > 1) add('warn', `Tabeli versioon on vastuoluline: ${[...versions].join(', ')} (pealkiri ja versiooni lahter erinevad).`);
+            if (versions.size > 1) add('warn', `Tabeli versioon on vastuoluline: ${[...versions].join(', ')} (pealkiri ja versiooni lahter erinevad).`, versionCells);
             let todayCell = '';
             for (let i = 0; i < hr; i++) for (let j = 0; j < (rows[i] || []).length; j++) {
                 const cell = ws[XLSX.utils.encode_cell({ r: r0 + i, c: j })];
                 if (cell && cell.f && /\b(TODAY|NOW)\s*\(/i.test(cell.f)) todayCell = XLSX.utils.encode_cell({ r: r0 + i, c: j });
             }
-            if (todayCell) add('warn', `Kuupäev (${todayCell}) on valem TODAY(): see muutub iga avamisega ja PDF-il on iga kord eri kuupäev. Kirjuta kuupäev käsitsi.`);
+            if (todayCell) add('warn', `Kuupäev (${todayCell}) on valem TODAY(): see muutub iga avamisega ja PDF-il on iga kord eri kuupäev. Kirjuta kuupäev käsitsi.`, [todayCell]);
 
             // --- andmeread
             let zone = '', blocks = [], blk = null, grp = null, circ = null;
@@ -2001,14 +2003,14 @@
                     zone = txt(r[C.zone]);
                     if (!zones[zone]) {
                         const m = zone.match(/[\d.]+\s*([LM])A?\s*(\d)/i);
-                        zones[zone] = { req: 0, stated: 0, sum: 0, hasStated: false, m2: 0, rows: [], buttons: {}, units: 0,
+                        zones[zone] = { i, req: 0, stated: 0, sum: 0, hasStated: false, m2: 0, rows: [], buttons: {}, units: 0,
                                         kind: m ? m[1].toUpperCase() : '', nameLevel: m ? +m[2] : NaN, level: NaN, komp: '' };
                     }
                     const Z0 = zones[zone];
                     if (O.level >= 0 && has(r[O.level])) Z0.level = num(r[O.level]);
                     if (O.komp >= 0 && has(r[O.komp])) Z0.komp = txt(r[O.komp]);
                 } else if (zone && C.area >= 0 && has(r[C.area])) {
-                    add('warn', `Rida ${xlRow(i)}: SE ala „${txt(r[C.area])}“ on ilma tsooni numbrita, arvestatud tsooni ${zone} alla. Kontrolli, kas see on sama tsoon (EVS 919 p 3.2: tähise esimene number = korrus).`);
+                    add('warn', `Rida ${xlRow(i)}: SE ala „${txt(r[C.area])}“ on ilma tsooni numbrita, arvestatud tsooni ${zone} alla. Kontrolli, kas see on sama tsoon (EVS 919 p 3.2: tähise esimene number = korrus).`, [A1(i, C.zone), A1(i, C.area)]);
                 }
                 if (!zone) continue;
                 const Z = zones[zone];
@@ -2021,7 +2023,7 @@
                     if (!isNaN(a)) Z.m2 += a;
                     const pv = O.pct >= 0 ? r[O.pct] : '';
                     const pct = typeof pv === 'number' ? (pv < 0.1 ? pv * 100 : pv) : num(pv);
-                    Z.rows.push({ row: xlRow(i), ala: txt(r[C.area]), m2: a, load: O.load >= 0 ? txt(r[O.load]) : '', pct, req: num(r[C.req]) });
+                    Z.rows.push({ i, row: xlRow(i), ala: txt(r[C.area]), m2: a, load: O.load >= 0 ? txt(r[O.load]) : '', pct, req: num(r[C.req]) });
                 }
 
                 const g = txt(r[C.grp]);
@@ -2038,13 +2040,13 @@
                 const sj = r[C.sejk];
                 if (txt(sj)) {
                     if (/^sejk\s*\S+/i.test(txt(sj))) blk.nr = txt(sj);
-                    else if (typeof sj === 'number' || /^[\d.,]+\s*a?$/i.test(txt(sj))) blk.total = num(sj);
-                    else if (/^sv/i.test(txt(sj)) || !blk.name) blk.name = txt(sj); // muu tekst (nt ruumi nr) ei kirjuta keskuse tüüpi üle
+                    else if (typeof sj === 'number' || /^[\d.,]+\s*a?$/i.test(txt(sj))) { blk.total = num(sj); blk.totalI = i; }
+                    else if (/^sv/i.test(txt(sj)) || !blk.name) { blk.name = txt(sj); blk.nameI = i; } // muu tekst (nt ruumi nr) ei kirjuta keskuse tüüpi üle
                 }
                 if (txt(r[C.btn])) { grp.buttons[txt(r[C.btn])] = true; Z.buttons[txt(r[C.btn])] = true; }
 
                 if (txt(r[C.circ])) {
-                    circ = { zone, grp: grp.num, blk: blocks.length, stated: num(r[C.circ]), sum: 0, row: xlRow(i),
+                    circ = { i, zone, grp: grp.num, blk: blocks.length, stated: num(r[C.circ]), sum: 0, row: xlRow(i),
                              len: O.len >= 0 ? num(r[O.len]) : NaN, cs: O.cs >= 0 ? num(r[O.cs]) : NaN, cable: O.cable >= 0 ? txt(r[O.cable]) : '' };
                     circuits.push(circ);
                 }
@@ -2075,7 +2077,7 @@
                             if (!row) issues.push(['err', `avanemisnurk ${ang}° on väiksem kui EVS 919 tabelis B.1 (min 30°)`]);
                             else if (cv > row[1] + 1e-9) issues.push(['err', `Cv ${fmt(cv)} on suurem kui EVS 919 tabel B.1 lubab (${row[0]}° ${dir}: ${fmt(row[1])})`]);
                         }
-                        if (issues.length) issues.forEach(([lv, t]) => seaRes.issues.push([lv, `${l} (${zone}): ${t}`]));
+                        if (issues.length) issues.forEach(([lv, t]) => seaRes.issues.push([lv, `${l} (${zone}): ${t}`, [A1(i, C.av)]]));
                         else seaRes.ok++;
                     } else {
                         grp.sel++;
@@ -2113,9 +2115,9 @@
             // --- kontroll 1: tsoonide efektiivne pindala
             zoneList.forEach(([z, Z]) => {
                 if (Z.hasStated && Math.abs(Z.stated - Z.sum) > 0.01)
-                    add('err', `${z}: "SE avade tegelik Aa" on tabelis ${fmt(Z.stated)} m², luukide Aa summa on ${fmt(Z.sum)} m².`);
+                    add('err', `${z}: "SE avade tegelik Aa" on tabelis ${fmt(Z.stated)} m², luukide Aa summa on ${fmt(Z.sum)} m².`, [A1(Z.i, C.act)]);
                 if (Z.req && Z.sum + 1e-9 < Z.req)
-                    add('warn', `${z}: luukide Aa ${fmt(Z.sum)} m² jääb nõutavale ${fmt(Z.req)} m² alla (puudu ${fmt(Z.req - Z.sum, 3)} m², ${fmt((Z.req - Z.sum) / Z.req * 100, 1)} %). EVS 919 tabel 9 lubatud kõrvalekallet ei anna.`);
+                    add('warn', `${z}: luukide Aa ${fmt(Z.sum)} m² jääb nõutavale ${fmt(Z.req)} m² alla (puudu ${fmt(Z.req - Z.sum, 3)} m², ${fmt((Z.req - Z.sum) / Z.req * 100, 1)} %). EVS 919 tabel 9 lubatud kõrvalekallet ei anna.`, [A1(Z.i, C.act)]);
             });
 
             // --- kontroll 2: nõutav Aa = pindala × tegur ja tegur EVS 919 tabeli 9 järgi (ruumi kõrgus kuni 10 m)
@@ -2135,15 +2137,15 @@
                 Z.rows.forEach(x => {
                     const where = `${z}${x.ala ? ' (' + x.ala + ')' : ''}`;
                     if (!isNaN(x.m2) && !isNaN(x.pct) && !isNaN(x.req) && Math.abs(x.m2 * x.pct / 100 - x.req) > 0.01)
-                        add('err', `${where}: nõutav Aa ${fmt(x.req)} m² ≠ pindala × tegur = ${fmt(x.m2)} × ${fmt(x.pct)} % = ${fmt(x.m2 * x.pct / 100)} m².`);
+                        add('err', `${where}: nõutav Aa ${fmt(x.req)} m² ≠ pindala × tegur = ${fmt(x.m2)} × ${fmt(x.pct)} % = ${fmt(x.m2 * x.pct / 100)} m².`, [A1(x.i, C.req)]);
                     const t9 = table9(x.load);
                     if (!t9 || isNaN(x.pct)) return;
                     if (x.pct + 1e-9 < t9.k4)
-                        add('err', `${where}: SE avade tegur ${fmt(x.pct)} % on väiksem kui EVS 919 tabel 9 (${t9.label} MJ/m²: ${fmt(t9.k13)} %, kaitsetase 4: ${fmt(t9.k4)} %).`);
+                        add('err', `${where}: SE avade tegur ${fmt(x.pct)} % on väiksem kui EVS 919 tabel 9 (${t9.label} MJ/m²: ${fmt(t9.k13)} %, kaitsetase 4: ${fmt(t9.k4)} %).`, [A1(x.i, O.pct)]);
                     else if (x.pct + 1e-9 < t9.k13)
-                        add('warn', `${where}: tegur ${fmt(x.pct)} % vastab EVS 919 tabelis 9 ainult kaitsetasemele 4 (automaatne kustutus). Kaitsetasemel 1–3 on nõue ${fmt(t9.k13)} %.`);
+                        add('warn', `${where}: tegur ${fmt(x.pct)} % vastab EVS 919 tabelis 9 ainult kaitsetasemele 4 (automaatne kustutus). Kaitsetasemel 1–3 on nõue ${fmt(t9.k13)} %.`, [A1(x.i, O.pct)]);
                     else if (x.pct > t9.k13 + 1e-9)
-                        add('warn', `${where}: tegur ${fmt(x.pct)} % on suurem kui EVS 919 tabel 9 (${t9.label} MJ/m²: ${fmt(t9.k13)} %). Kontrolli allikat (TO projekt?).`);
+                        add('warn', `${where}: tegur ${fmt(x.pct)} % on suurem kui EVS 919 tabel 9 (${t9.label} MJ/m²: ${fmt(t9.k13)} %). Kontrolli allikat (TO projekt?).`, [A1(x.i, O.pct)]);
                 });
             });
 
@@ -2151,11 +2153,11 @@
             zoneList.forEach(([z, Z]) => {
                 const max = Z.kind === 'M' ? 2600 : Z.kind === 'L' ? 2000 : 0;
                 if (max && Z.m2 > max)
-                    add('err', `${z}: tsooni pindala ${fmt(Z.m2, 0)} m² ületab EVS 919 p 6.8.5 piiri (${Z.kind === 'L' ? 'loomulik' : 'mehaaniline'} ${max} m²).`);
+                    add('err', `${z}: tsooni pindala ${fmt(Z.m2, 0)} m² ületab EVS 919 p 6.8.5 piiri (${Z.kind === 'L' ? 'loomulik' : 'mehaaniline'} ${max} m²).`, [A1(Z.i, O.m2)]);
                 if (Z.kind === 'L' && Z.m2 && Z.units && Z.units < Math.ceil(Z.m2 / 400))
-                    add('warn', `${z}: ${Z.units} luuki/akent ${fmt(Z.m2, 0)} m² kohta. EVS 919 p 6.11.2: laepinna iga 400 m² kohta vähemalt 1 luuk (vaja ${Math.ceil(Z.m2 / 400)}).`);
+                    add('warn', `${z}: ${Z.units} luuki/akent ${fmt(Z.m2, 0)} m² kohta. EVS 919 p 6.11.2: laepinna iga 400 m² kohta vähemalt 1 luuk (vaja ${Math.ceil(Z.m2 / 400)}).`, [A1(Z.i, C.zone)]);
                 if (!isNaN(Z.level) && !isNaN(Z.nameLevel) && Z.level !== Z.nameLevel)
-                    add('warn', `${z}: tähises on käivitustase ${Z.nameLevel}, veerus „SE käivitustase“ ${Z.level}.`);
+                    add('warn', `${z}: tähises on käivitustase ${Z.nameLevel}, veerus „SE käivitustase“ ${Z.level}.`, [A1(Z.i, O.level)]);
             });
 
             // --- kontroll 4: käivitusnupud ja infotabloo
@@ -2170,12 +2172,12 @@
                 if (!n) btnZones.none.push(z);
                 else if (lv === 2 && n < 2) btnZones.one.push(z);
             });
-            if (btnZones.none.length) add('warn', `Käivitusnupp puudub tsoonides: ${btnZones.none.join(', ')}.`);
+            if (btnZones.none.length) add('warn', `Käivitusnupp puudub tsoonides: ${btnZones.none.join(', ')}.`, btnZones.none.map(z => A1(zones[z].i, C.btn)));
             if (btnZones.one.length) {
                 if (tabloNeeded)
                     add('ok', `Käivitustase 2: ${btnZones.one.length} tsoonis 1 käivitusnupp + infotabloo = 2 juhtimispunkti (EVS 919 p 8.1.1, 8.1.28). Tabloo päästemeeskonna sisenemisteel ei kuulu Keraplasti tarnesse – peab olema hoone projektis.`);
                 else
-                    add('warn', `Käivitustase 2: tsoonides ${btnZones.one.join(', ')} on 1 käivitusnupp. Tsoone on ${zoneList.length}, infotabloo pole EVS 919 p 8.1.1 järgi nõutav, seega on p 8.1.28 järgi üldjuhul vaja 2 käivitusnuppu.`);
+                    add('warn', `Käivitustase 2: tsoonides ${btnZones.one.join(', ')} on 1 käivitusnupp. Tsoone on ${zoneList.length}, infotabloo pole EVS 919 p 8.1.1 järgi nõutav, seega on p 8.1.28 järgi üldjuhul vaja 2 käivitusnuppu.`, btnZones.one.map(z => A1(zones[z].i, C.btn)));
             }
             if (tabloNeeded) add('warn', `Hoones on ${zoneList.length} SE tsooni${zoneList.some(([, Z]) => Z.kind === 'M') ? ' / lahendusviis 3' : ''}: EVS 919 p 8.1.1 järgi on nõutav informatsiooni- ja juhtimistabloo päästemeeskonna sisenemisteel (teiste osapoolte tarne). Kontrolli, et see on projektis.`);
 
@@ -2186,42 +2188,42 @@
                     if (!Z.komp) return;
                     const a = num(Z.komp);
                     if (isNaN(a)) noArea.push(z);
-                    else if (a + 1e-9 < Z.sum) add('warn', `${z}: kompensatsiooniõhu pindala ${fmt(a)} m² on väiksem kui luukide Aa ${fmt(Z.sum)} m² (EVS 919 p 6.14.1).`);
+                    else if (a + 1e-9 < Z.sum) add('warn', `${z}: kompensatsiooniõhu pindala ${fmt(a)} m² on väiksem kui luukide Aa ${fmt(Z.sum)} m² (EVS 919 p 6.14.1).`, [A1(Z.i, O.komp)]);
                 });
                 if (noArea.length) {
                     const big = zoneList.filter(([z]) => noArea.includes(z)).sort((a, b) => b[1].sum - a[1].sum)[0];
-                    add('warn', `Kompensatsiooniõhu pindala pole antud (${noArea.length} tsooni, nt „${zones[big[0]].komp}“). EVS 919 p 6.14.1 ja 6.7.16: efektiivpindala vähemalt tsooni luukide Aa; suurim ${big[0]}: ${fmt(big[1].sum)} m².`);
+                    add('warn', `Kompensatsiooniõhu pindala pole antud (${noArea.length} tsooni, nt „${zones[big[0]].komp}“). EVS 919 p 6.14.1 ja 6.7.16: efektiivpindala vähemalt tsooni luukide Aa; suurim ${big[0]}: ${fmt(big[1].sum)} m².`, noArea.map(z => A1(zones[z].i, O.komp)));
                 }
             }
 
             // --- kontroll 6: SEA (EVS 919 tabel B.1) ja SEL Aa allikas
-            seaRes.issues.forEach(([lv, t]) => add(lv, t));
+            seaRes.issues.forEach(([lv, t, cells]) => add(lv, t, cells));
             if (seaRes.ok) add('ok', `SEA (${seaRes.ok} tk): Av, Aa ja Cv vastavad EVS 919 tabelile B.1 (kehtib alaservast hingedega, EN 12101-2 järgi testimata akendele).`);
             Object.entries(selCv).forEach(([cv, n]) => {
-                add('warn', `SEL Aa on arvutatud Av × ${cv} (${n} luuki). EVS 919 lisa E.2 ja B.3: kasuta toimivusdeklaratsiooni (DoP) või CE-märgise Aa väärtust.`);
+                add('warn', `SEL Aa on arvutatud Av × ${cv} (${n} luuki). EVS 919 lisa E.2 ja B.3: kasuta toimivusdeklaratsiooni (DoP) või CE-märgise Aa väärtust.`, [A1(hr, C.aa)]);
             });
 
             // --- kontroll 7: toiteahelate vool
             circuits.forEach(c => {
                 if (!isNaN(c.stated) && Math.abs(c.stated - c.sum) > 0.05)
-                    add('err', `${c.zone} (Gr ${c.grp}): toiteahela vool tabelis ${fmt(c.stated, 1)} A, luukide voolude summa ${fmt(c.sum, 1)} A.`);
+                    add('err', `${c.zone} (Gr ${c.grp}): toiteahela vool tabelis ${fmt(c.stated, 1)} A, luukide voolude summa ${fmt(c.sum, 1)} A.`, [A1(c.i, C.circ)]);
             });
             blocks.forEach((b, i) => {
                 const own = circuits.filter(c => c.blk === i + 1);
                 const sum = own.reduce((n, c) => n + (isNaN(c.stated) ? 0 : c.stated), 0);
                 const label = `${sejks[i].nr}${b.name ? ' ' + b.name : ''}`;
                 if (!isNaN(b.total) && Math.abs(b.total - sum) > 0.05)
-                    add('err', `${sejks[i].nr}: koguvool tabelis ${fmt(b.total, 1)} A, ahelate summa ${fmt(sum, 1)} A.`);
+                    add('err', `${sejks[i].nr}: koguvool tabelis ${fmt(b.total, 1)} A, ahelate summa ${fmt(sum, 1)} A.`, [A1(b.totalI, C.sejk)]);
                 const nom = num((b.name.match(/(\d+)\s*A\b/i) || [])[1]);
                 if (!isNaN(nom)) {
-                    if (sum > nom + 1e-9) add('err', `${label}: ahelate vool ${fmt(sum, 1)} A ületab keskuse nimivoolu ${nom} A.`);
+                    if (sum > nom + 1e-9) add('err', `${label}: ahelate vool ${fmt(sum, 1)} A ületab keskuse nimivoolu ${nom} A.`, [A1(b.nameI, C.sejk)]);
                     else add('ok', `${label}: ahelate vool ${fmt(sum, 1)} A / ${nom} A.`);
                 }
                 if (/svl/i.test(b.name)) {
                     const perGrp = {};
                     own.forEach(c => { perGrp[c.grp] = (perGrp[c.grp] || 0) + (isNaN(c.stated) ? 0 : c.stated); });
                     Object.entries(perGrp).forEach(([g, a]) => {
-                        if (a > 25) add('err', `${label} Gr ${g}: grupi vool ${fmt(a, 1)} A ületab SVL väljundi 25 A (SVL juhend, kaitse F2–F7).`);
+                        if (a > 25) add('err', `${label} Gr ${g}: grupi vool ${fmt(a, 1)} A ületab SVL väljundi 25 A (SVL juhend, kaitse F2–F7).`, own.filter(c => c.grp == g).map(c => A1(c.i, C.circ)));
                     });
                 }
             });
@@ -2236,15 +2238,15 @@
                     const U = num((b.name.match(/(\d+)\s*V\b/i) || [])[1]) || 48;
                     const need = 0.0183 * 2 * c.len * c.stated / (0.15 * U);
                     const where = `${c.zone} (Gr ${c.grp}, ahel ${fmt(c.len, 0)} m, ${fmt(c.stated, 1)} A)`;
-                    if (!isNaN(c.cs) && Math.abs(c.cs - need) > 0.02) add('err', `${where}: ristlõige tabelis ${fmt(c.cs)} mm², arvutus ${fmt(need)} mm² (${U} V, pingelang 15 %).`);
+                    if (!isNaN(c.cs) && Math.abs(c.cs - need) > 0.02) add('err', `${where}: ristlõige tabelis ${fmt(c.cs)} mm², arvutus ${fmt(need)} mm² (${U} V, pingelang 15 %).`, [A1(c.i, O.cs)]);
                     const m = c.cable.match(/\d+\s*[x×]\s*([\d.,]+)/);
                     const got = m ? num(m[1]) : NaN;
                     const next = STD.find(s => s + 1e-9 >= need);
                     if (!isNaN(got)) {
-                        if (got + 1e-9 < need) add('err', `${where}: kaabel ${c.cable} (${fmt(got)} mm²) on väiksem kui nõutav ${fmt(need)} mm².`);
+                        if (got + 1e-9 < need) add('err', `${where}: kaabel ${c.cable} (${fmt(got)} mm²) on väiksem kui nõutav ${fmt(need)} mm².`, [A1(c.i, O.cable)]);
                         else okN++;
                     } else if (need > 2.5) {
-                        add('warn', `${where}: nõutav ristlõige ${fmt(need)} mm² → kaabel vähemalt ${next ? fmt(next) : '>16'} mm² (SVL juhend lk 16–17).`);
+                        add('warn', `${where}: nõutav ristlõige ${fmt(need)} mm² → kaabel vähemalt ${next ? fmt(next) : '>16'} mm² (SVL juhend lk 16–17).`, [A1(c.i, O.cs >= 0 ? O.cs : O.len)]);
                     } else okN++;
                 });
                 if (okN) add('ok', `Kaabli ristlõige: ${okN} ahelat klapib (pingelang kuni 15 %).`);
@@ -2259,13 +2261,13 @@
                     for (let j = i + 1; j < rows.length; j++) {
                         const d = rows[j][c], q = rows[j][c + 1];
                         if (txt(d) === '' && txt(q) === '') break;
-                        list.push({ desc: d, qty: num(q) });
+                        list.push({ desc: d, qty: num(q), cell: A1(j, c + 1) });
                     }
                     break;
                 }
             }
             const centers = sejks.length;
-            list.forEach(({ desc, qty }) => {
+            list.forEach(({ desc, qty, cell }) => {
                 const d = txt(desc);
                 let expected = NaN, label = d, note = '';
                 if (typeof desc === 'number' || /^[\d.,]+$/.test(d) || /orivent|suitsuluuk/i.test(d) && /Av\s*[\d.,]+/i.test(d)) {
@@ -2279,7 +2281,7 @@
                     expected = totalGroups - 2 * centers; note = ' (eeldusel: keskuses on 2 gruppi, iga kaart lisab 1 grupi)';
                 } else if (/käivitusnupp|imcp/i.test(d)) { expected = totalBtn; label = 'Käivitusnupp iMCP'; }
                 if (isNaN(expected)) return;
-                if (expected !== qty) add('err', `Seadmete loetelus "${label}" ${qty} tk, tabeli ridade järgi ${expected} tk${note}.`);
+                if (expected !== qty) add('err', `Seadmete loetelus "${label}" ${qty} tk, tabeli ridade järgi ${expected} tk${note}.`, [cell]);
                 else add('ok', `${label}: ${qty} tk klapib.`);
             });
             if (!list.length) add('warn', 'Tabelis puudub "Paigaldatud seadmete loetelu", koguseid ei saanud võrrelda.');
@@ -2432,7 +2434,12 @@
             showToast('📤 Salvestan...');
             const res = await postJson({ action: 'importObject', data });
             if (res.success === false) { showToast('⚠ ' + res.message); return; }
-            const up = await postJson({ action: 'uploadFile', data: { address, category: '2 Projekt', filename: file.name, mime: file.type, base64: await fileToDataUrl(file) } });
+            // Exceli fail kausta "2 Projekt" + kontrollitud koopia (murekohad värviga) ja PDF kausta "3 Paigaldus"
+            showToast('📤 Teen kontrollitud PDF-i paigaldajale...');
+            const marks = parsed.checks.filter(c => c.level !== 'ok').map(c => ({ level: c.level, text: c.text, cells: c.cells || [] }));
+            const up = await postJson({ action: 'uploadFile', data: { address, category: '2 Projekt', filename: file.name,
+                mime: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', base64: await fileToDataUrl(file),
+                marks, sheetName: parsed.meta.source } });
             // kohalik register
             const rec = { key, address, object: data.object, client: data.client, sejks: data.sejks,
                           lastDate: existing ? existing.lastDate : '', lastWork: existing ? existing.lastWork : '', contract: existing ? existing.contract : false };
@@ -2443,7 +2450,10 @@
             document.getElementById('objSelect').value = key;
             loadObject(key);
             closeModal('importModal');
-            showToast(up.success === false ? '⚠ Objekt salvestatud, faili üleslaadimine ebaõnnestus' : '✓ Objekt ja tabel salvestatud');
+            if (up.success === false) showToast('⚠ Objekt salvestatud, faili üleslaadimine ebaõnnestus');
+            else if (up.checkedError) showToast('⚠ Tabel salvestatud, kontrollitud PDF-i ei saanud teha: ' + up.checkedError);
+            else if (up.checked) showToast('✓ Objekt, tabel ja kontrollitud PDF (3 Paigaldus) salvestatud');
+            else showToast('✓ Objekt ja tabel salvestatud');
         }
 
         // ===== Objekti kaart =====
