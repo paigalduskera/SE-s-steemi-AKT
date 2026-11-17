@@ -500,6 +500,26 @@
         .planner-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; gap: 1rem; }
         .planner-foot .btn { flex: 1; }
 
+        .obj-actions { display: flex; gap: 0.5rem; }
+        .plan-btn.small { font-size: 0.82rem; padding: 0.6rem; margin-top: 0.5rem; }
+        .card-sec { margin-top: 1rem; }
+        .card-sec h4 { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; }
+        .card-tbl { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+        .card-tbl td, .card-tbl th { border-bottom: 1px solid var(--border); padding: 0.35rem 0.3rem; text-align: left; vertical-align: top; }
+        .card-tbl th { color: var(--text-muted); font-weight: 500; }
+        .card-tbl a, .file-link { color: var(--accent); }
+        .kv { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.8rem; font-size: 0.82rem; }
+        .kv span:nth-child(odd) { color: var(--text-muted); }
+        .chk { font-size: 0.8rem; padding: 0.35rem 0.5rem; border-radius: 6px; margin-bottom: 0.3rem; }
+        .chk.err { background: rgba(255,107,107,0.15); color: #ff8f8f; }
+        .chk.warn { background: rgba(255,159,28,0.15); color: #ffb85c; }
+        .chk.ok { background: rgba(81,207,102,0.12); color: #7ddc8f; }
+        #importBody .info-label { display: block; margin-bottom: 0.25rem; }
+        #importBody .info-input { display: block; width: 100%; }
+        .upload-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.5rem; }
+        .upload-row select, .upload-row input { flex: 1; min-width: 120px; }
+        .muted { color: var(--text-muted); font-size: 0.8rem; }
+
         .toast {
             position: fixed;
             bottom: 8rem;
@@ -514,6 +534,7 @@
             opacity: 0;
             transition: all 0.3s;
             z-index: 1001;
+            pointer-events: none; /* nähtamatu teade ei tohi nuppe katta */
         }
 
         .toast.show {
@@ -636,6 +657,11 @@
             <button class="obj-btn" onclick="fetchObjects(true)" title="Värskenda">⟳</button>
         </div>
         <button class="plan-btn" onclick="openPlanner()">📅 Päeva plaan ja print</button>
+        <div class="obj-actions">
+            <button class="plan-btn small" onclick="openCard()">📁 Objekti kaart</button>
+            <button class="plan-btn small" onclick="document.getElementById('xlsxInput').click()">📥 Impordi tabel</button>
+            <input type="file" id="xlsxInput" accept=".xlsx,.xls" style="display:none" onchange="importXlsx(this.files[0]); this.value='';">
+        </div>
         <div id="objInfo" class="obj-info"></div>
     </div>
 
@@ -738,6 +764,26 @@
         </div>
     </div>
 
+    <div class="planner" id="importModal">
+        <div class="planner-box">
+            <div class="planner-head">
+                <div class="title">Põhinäitajate tabeli import</div>
+                <button class="obj-btn" onclick="closeModal('importModal')">✕</button>
+            </div>
+            <div id="importBody"></div>
+        </div>
+    </div>
+
+    <div class="planner" id="cardModal">
+        <div class="planner-box">
+            <div class="planner-head">
+                <div class="title">Objekti kaart</div>
+                <button class="obj-btn" onclick="closeModal('cardModal')">✕</button>
+            </div>
+            <div id="cardBody"></div>
+        </div>
+    </div>
+
     <div class="toast" id="toast"></div>
     <div class="photo-modal" id="photoModal" onclick="closePhotoModal()">
         <span class="photo-modal-close">&times;</span>
@@ -746,6 +792,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script>
         // Set current date
         document.getElementById('workDate').value = new Date().toLocaleDateString('et-EE');
@@ -792,13 +839,13 @@
         function draw(e) {
             e.preventDefault();
             if (!isDrawing) return;
-            
+
             const coords = getCoordinates(e);
             ctx.beginPath();
             ctx.moveTo(lastX, lastY);
             ctx.lineTo(coords.x, coords.y);
             ctx.stroke();
-            
+
             lastX = coords.x;
             lastY = coords.y;
         }
@@ -848,7 +895,7 @@
             const autoGroup = opts.autoGroup !== false;
             sejkCounter++;
             const sejkId = `sejk-${sejkCounter}`;
-            
+
             const sejkHtml = `
                 <div class="sejk-item" id="${sejkId}" data-sejk-num="${sejkCounter}">
                     <div class="sejk-header" onclick="toggleSejk('${sejkId}')">
@@ -877,9 +924,9 @@
                     </div>
                 </div>
             `;
-            
+
             document.getElementById('sejkContainer').insertAdjacentHTML('beforeend', sejkHtml);
-            
+
             if (!autoGroup) {
                 // Ehitatakse registrist: grupid lisab kutsuja
                 if (opts.name) document.querySelector(`#${sejkId} .sejk-name-input`).value = opts.name;
@@ -890,7 +937,7 @@
                 document.getElementById(sejkId).classList.add('active');
                 addGrupp(sejkId);
             }, 100);
-            
+
             showToast('✓ SEJK lisatud');
             return sejkId;
         }
@@ -914,11 +961,11 @@
             const gruppId = `grupp-${gruppCounter}`;
             const container = document.getElementById(`grupp-container-${sejkId}`);
             const gruppNum = container.querySelectorAll('.grupp-accordion').length + 1;
-            
+
             const gruppHtml = `
                 <div class="grupp-accordion active" id="${gruppId}">
                     <div class="grupp-header" onclick="toggleGrupp('${gruppId}')">
-                        <input type="text" class="grupp-title-input" value="" data-default="Grupp ${gruppNum}" 
+                        <input type="text" class="grupp-title-input" value="" data-default="Grupp ${gruppNum}"
                                onclick="event.stopPropagation()" placeholder="Grupp ${gruppNum} - tsoon, nt SE 2.1L2">
                         <div>▼</div>
                     </div>
@@ -1024,7 +1071,7 @@
                     </div>
                 </div>
             `;
-            
+
             container.insertAdjacentHTML('beforeend', gruppHtml);
             updateSejkStatus(sejkId);
         }
@@ -1056,7 +1103,7 @@
         function handlePhoto(sejkId, event) {
             const files = event.target.files;
             const container = document.getElementById(`photos-${sejkId}`);
-            
+
             Array.from(files).forEach(file => {
                 const reader = new FileReader();
                 reader.onload = function(e) {
@@ -1089,7 +1136,7 @@
                 const sejkNr = sejkEl.querySelector('.sejk-nr-input').value.trim();
                 const photoContainer = sejkEl.querySelector(`#photos-sejk-${sejkNum}`);
                 const photos = photoContainer ? Array.from(photoContainer.querySelectorAll('img')).map(img => img.src) : [];
-                
+
                 const grupps = [];
                 sejkEl.querySelectorAll('.grupp-accordion').forEach(gruppEl => {
                     const inputs = gruppEl.querySelectorAll('.field-input');
@@ -1112,7 +1159,7 @@
                         aku: inputs[14].value
                     });
                 });
-                
+
                 sejks.push({
                     num: sejkNum,
                     nr: sejkNr,
@@ -1142,10 +1189,10 @@
 
         async function saveForm() {
             const data = getFormData();
-            
+
             // Save locally first (with signature and photos)
             localStorage.setItem('katsetusakt_mobile', JSON.stringify(data));
-            
+
             // Prepare data for Sheets (WITHOUT signature and photos to keep size small)
             const sejksForSheet = data.sejks.map(sejk => ({
                 num: sejk.num,
@@ -1153,7 +1200,7 @@
                 photoCount: sejk.photos ? sejk.photos.length : 0, // Just count, not actual photos
                 grupps: sejk.grupps // Keep groups info
             }));
-            
+
             const sheetData = {
                 workNumber: data.workNumber,
                 workDate: data.workDate,
@@ -1166,21 +1213,21 @@
                 notes: data.notes,
                 sejks: sejksForSheet // Without photos
             };
-            
+
             // Send to Google Sheets
             try {
                 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_lgIpAfXxeBGCPa0MqqNaXUWXu92YfgFTc-BEaY6WtBtq5_349rf1YgnDqySNXLuBxQ/exec';
-                
+
                 showToast('📤 Saadan Google Sheets\'i...');
-                
+
                 const params = new URLSearchParams({
                     action: 'save',
                     data: JSON.stringify(sheetData)
                 });
-                
+
                 const response = await fetch(`${GOOGLE_SCRIPT_URL}?${params.toString()}`);
                 const result = await response.json();
-                
+
                 if (result.success) {
                     lastSavedRowNumber = result.rowNumber;
                     showToast('✓ Salvestatud Sheets\'i! (Rida: ' + lastSavedRowNumber + ')');
@@ -1205,41 +1252,41 @@
             const keraplastRed = [237, 106, 94]; // Softer red #ED6A5E
             const keraplastGray = [102, 102, 102]; // Gray #666666
             const lightGray = [245, 245, 245]; // Very light gray background
-            
+
             // Add Keraplast logo
-            
+
             // Add Keraplast logo as TEXT (simpler and more reliable)
             doc.setFontSize(16);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(keraplastRed[0], keraplastRed[1], keraplastRed[2]);
             doc.text('KERAPLAST', 10, 14);
-            
+
             doc.setFontSize(7);
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(keraplastGray[0], keraplastGray[1], keraplastGray[2]);
             doc.text('ESTONIA', 10, 18);
-            
-            
+
+
             doc.setFontSize(14);
             doc.setTextColor(keraplastGray[0], keraplastGray[1], keraplastGray[2]);
             doc.text('SE SÜSTEEMI KATSETUSAKT', 148, 15, { align: 'center' });
-            
+
             doc.setFontSize(8);
             doc.setTextColor(0, 0, 0);
             doc.text(`Töö Nr: ${data.workNumber}`, 10, 25);
             doc.text(`Kuupäev: ${data.workDate}`, 10, 30);
             doc.text(`Töövõtja: Keraplast OÜ, Reg: 12053007`, 10, 35);
-            
+
             doc.text(`Objekt: ${data.object}`, 100, 25);
             doc.text(`Aadress: ${data.address}`, 100, 30);
             doc.text(`Tellija: ${data.client}`, 100, 35);
-            
+
             doc.text(`Koostas: ${data.compiler}`, 190, 25);
             doc.text(`Kontrollis: Silvar Pippar: 220790`, 190, 30);
-            
+
             doc.text(`Töö liik: ${data.workType}`, 10, 45);
             doc.text(`Süsteem: ${data.systemStatus}`, 60, 45);
-            
+
             // Add legend
             doc.setFontSize(7);
             doc.text('Korras: K     Puudus: P', 190, 45);
@@ -1284,15 +1331,15 @@
                     doc.addPage();
                     finalY = 20;
                 }
-                
+
                 doc.setFontSize(8);
                 doc.text('Tööd on teostatud kokkulepitud mahus ja tingimustel ning Tellijal puuduvad pretensioonid teostatud tööde kohta.', 10, finalY);
                 finalY += 8;
-                
+
                 doc.setFontSize(9);
                 doc.text('Allkiri:', 10, finalY);
                 finalY += 5;
-                
+
                 try {
                     doc.addImage(data.signatureImage, 'PNG', 10, finalY, 60, 20);
                     finalY += 25;
@@ -1301,24 +1348,45 @@
                 }
             }
 
+            // Muudatused võrreldes registriga (seadmete arv, grupid, keskused)
+            const baseline = objects.find(o => o.key === objKey(data.address));
+            data.changes = baseline ? diffStructure(baseline.sejks || [], data.sejks.map(s => ({ nr: s.nr, name: s.name, grupps: s.grupps }))) : [];
+            if (data.changes.length) {
+                if (finalY > 150) { doc.addPage(); finalY = 15; }
+                doc.setFontSize(10);
+                doc.setTextColor(0, 0, 0);
+                doc.text('Muudatused võrreldes eelmise aktiga / registriga:', 10, finalY + 4);
+                doc.autoTable({
+                    startY: finalY + 7,
+                    head: [['Muudatus', 'Oli', 'Uus']],
+                    body: data.changes.map(c => [c.what, c.from, c.to]),
+                    theme: 'grid',
+                    styles: { fontSize: 8, cellPadding: 1.5 },
+                    headStyles: { fillColor: [237, 106, 94], textColor: [255, 255, 255] },
+                    columnStyles: { 0: { cellWidth: 150 }, 1: { cellWidth: 40 }, 2: { cellWidth: 40 } },
+                    margin: { left: 10 }
+                });
+                finalY = doc.lastAutoTable.finalY + 5;
+            }
+
             // Add photos
             const sejksWithPhotos = data.sejks.filter(sejk => sejk.photos && sejk.photos.length > 0);
             if (sejksWithPhotos.length > 0) {
                 doc.addPage();
                 doc.setFontSize(12);
                 doc.text('Fotodokumentatsioon', 10, 15);
-                
+
                 let y = 25;
                 sejksWithPhotos.forEach(sejk => {
                     if (y > 180) {
                         doc.addPage();
                         y = 15;
                     }
-                    
+
                     doc.setFontSize(9);
                     doc.text(`${[sejk.nr, sejk.name].filter(Boolean).join(' – ')}:`, 10, y);
                     y += 5;
-                    
+
                     let x = 10;
                     sejk.photos.forEach((photo) => {
                         if (x > 250) {
@@ -1329,7 +1397,7 @@
                                 y = 15;
                             }
                         }
-                        
+
                         try {
                             doc.addImage(photo, 'JPEG', x, y, 40, 40);
                             x += 45;
@@ -1337,7 +1405,7 @@
                             console.error('Failed to add image:', e);
                         }
                     });
-                    
+
                     y += 45;
                 });
             }
@@ -1350,7 +1418,8 @@
 
             doc.save(filename);
             showToast('✓ PDF salvestatud!');
-            
+            try { data.pdfBase64 = doc.output('datauristring'); } catch (e) { data.pdfBase64 = ''; }
+
             // Send to Google Sheets (only basic data + filename)
             saveActFull(data, filename);
         }
@@ -1370,29 +1439,29 @@
                     sejkCount: data.sejks.length,
                     pdfFilename: pdfFilename
                 };
-                
+
                 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_lgIpAfXxeBGCPa0MqqNaXUWXu92YfgFTc-BEaY6WtBtq5_349rf1YgnDqySNXLuBxQ/exec';
-                
+
                 const params = new URLSearchParams({
                     action: 'save',
                     data: JSON.stringify(sheetData)
                 });
-                
+
                 // Simple fetch with timeout - works better on iPhone
                 const fetchPromise = fetch(`${GOOGLE_SCRIPT_URL}?${params.toString()}`, {
                     method: 'GET',
                     mode: 'no-cors' // Important for iPhone compatibility
                 });
-                
-                const timeoutPromise = new Promise((_, reject) => 
+
+                const timeoutPromise = new Promise((_, reject) =>
                     setTimeout(() => reject(new Error('timeout')), 10000)
                 );
-                
+
                 await Promise.race([fetchPromise, timeoutPromise]);
-                
+
                 // With no-cors we can't read response, so assume success
                 showToast('✓ Andmed salvestatud!');
-                
+
             } catch (error) {
                 console.error('Sheets error:', error);
                 // Silently fail - PDF is already saved
@@ -1737,6 +1806,8 @@
                     address: data.address, client: data.client, compiler: data.compiler,
                     workType: data.workType, systemStatus: data.systemStatus, notes: data.notes,
                     pdfFilename: pdfFilename,
+                    pdfBase64: data.pdfBase64 || '',
+                    changes: data.changes || [],
                     sejks: data.sejks.map(s => ({ num: s.num, nr: s.nr, name: s.name, photoCount: s.photos.length, grupps: s.grupps }))
                 }
             };
@@ -1747,7 +1818,8 @@
                     key, address: data.address, object: data.object, client: data.client,
                     sejks: payload.data.sejks.map(s => ({ nr: s.nr, name: s.name, grupps: s.grupps.map(g => ({
                         name: g.name, sel: g.sel, sea: g.sea, hoc: g.hoc, imcp: g.imcp, mcp: g.mcp, opus: g.opus, wr: g.wr })) })),
-                    lastDate: data.workDate, lastWork: data.workNumber, compiler: data.compiler
+                    lastDate: data.workDate, lastWork: data.workNumber, compiler: data.compiler,
+                    contract: !!(objects.find(o => o.key === key) || {}).contract
                 };
                 const i = objects.findIndex(o => o.key === key);
                 if (i >= 0) objects[i] = rec; else objects.push(rec);
@@ -1820,6 +1892,643 @@
             });
             doc.save(`Paeva_aktid_${today}.pdf`);
             showToast(`✓ ${chosen.length} akti prinditud`);
+        }
+
+        // ===== Põhinäitajate tabeli (Excel) lugemine ja kontroll =====
+        // Tagastab { meta, address, object, sejks:[{nr,name,grupps:[{name,sel,sea,hoc,imcp,...}]}], checks:[{level,text}] }
+        // Kontrollid: EVS 919:2020 tabel 9, B.1, p 6.8.5, 6.11.2, 6.14.1, 8.1.28, lisa E.2; SVL juhend (kaabel, vool); koguste loetelu.
+        function parsePohinaitajad(wb) {
+            const XLSX = window.XLSX;
+            const name = wb.SheetNames.find(n => /põhinäitaja/i.test(n)) || wb.SheetNames[0];
+            const ws = wb.Sheets[name];
+            const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '', blankrows: true });
+            const r0 = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).s.r : 0;
+            const xlRow = i => r0 + i + 1; // Exceli rea number teadeteks
+            const txt = v => (v instanceof Date) ? v.toLocaleDateString('et-EE') : String(v === null || v === undefined ? '' : v).trim();
+            const norm = v => txt(v).toLowerCase().replace(/\s+/g, ' ');
+            const num = v => {
+                if (typeof v === 'number') return v;
+                const m = txt(v).replace(',', '.').match(/-?\d+(\.\d+)?/);
+                return m ? parseFloat(m[0]) : NaN;
+            };
+            const has = v => txt(v) !== '';
+            const fmt = (v, d = 2) => (Math.round(v * 10 ** d) / 10 ** d).toString().replace('.', ',');
+            const checks = [];
+            const add = (level, text) => checks.push({ level, text });
+
+            // --- päiserida ja veerud pealkirja järgi
+            const hr = rows.findIndex(r => r.some(c => norm(c) === 'se tsooni number'));
+            if (hr < 0) throw new Error('Ei leidnud päiserida "SE tsooni number". Kas see on põhinäitajate tabel?');
+            const H = rows[hr].map(norm);
+            const col = (test) => H.findIndex(test);
+            const C = {
+                zone: col(h => h === 'se tsooni number'),
+                area: col(h => h === 'se ala'),
+                req: col(h => h.includes('nõutav aa')),
+                act: col(h => h.includes('tegelik aa')),
+                luuk: col(h => h === 'se luuk'),
+                av: col(h => h === 'sel av'),
+                aa: col(h => h === 'sel aa'),
+                cur: col(h => h === 'sel i' || h === 'i'),
+                circ: col(h => h.includes('toite') || h === 'ahel'),
+                grp: col(h => h === 'grupp'),
+                sejk: col(h => h.includes('sejk')),
+                btn: col(h => h.includes('nupp'))
+            };
+            const missing = Object.keys(C).filter(k => C[k] < 0);
+            if (missing.length) throw new Error('Tabelist puuduvad veerud: ' + missing.join(', '));
+            // Valikulised veerud (EVS 919 kontrollideks)
+            const O = {
+                m2: col(h => h.startsWith('pindala')),
+                load: col(h => h.includes('koormus')),
+                pct: col(h => h.includes('tegur')),
+                komp: col(h => h.includes('komp')),
+                level: col(h => h.includes('käivitus-tase') || h.includes('käivitustase')),
+                len: col(h => h.includes('pikkus')),
+                cs: col(h => /rist(l)?õi/.test(h)),
+                cable: col(h => h.includes('kaabel'))
+            };
+
+            // --- päise andmed (read enne päiserida)
+            const meta = { source: name };
+            const top = rows.slice(0, hr);
+            const after = (re) => {
+                for (const r of top) for (let i = 0; i < r.length; i++) {
+                    if (re.test(txt(r[i]))) { for (let j = i + 1; j < r.length; j++) if (txt(r[j])) return txt(r[j]); }
+                }
+                return '';
+            };
+            meta.title = txt((top[0] || [])[0]);
+            meta.objectType = txt((top[1] || [])[0]);
+            meta.address = txt((top[2] || [])[0]);
+            meta.projectNo = after(/^töö nr/i);
+            meta.designer = after(/^to projekt/i);
+            meta.fireExpert = after(/^vastutav spetsialist/i);
+            meta.compiledBy = after(/^koostas/i);
+            meta.fireClass = after(/^tuleohutusklass/i);
+            const versions = new Set();
+            for (const r of top) for (const c of r) {
+                if (/^v\d+$/i.test(txt(c))) meta.version = txt(c);
+                if (c instanceof Date) meta.date = c.toLocaleDateString('et-EE');
+                if (/^v\d+$/i.test(txt(c))) versions.add(txt(c).toLowerCase());
+            }
+            const tv = meta.title.match(/\bv\d{1,3}\b/i); // versioon pealkirjas (nt "... tabel v01")
+            if (tv) versions.add(tv[0].toLowerCase());
+
+            // --- kontroll: versioon ja kuupäev (dokumendi haldus)
+            if (versions.size > 1) add('warn', `Tabeli versioon on vastuoluline: ${[...versions].join(', ')} (pealkiri ja versiooni lahter erinevad).`);
+            let todayCell = '';
+            for (let i = 0; i < hr; i++) for (let j = 0; j < (rows[i] || []).length; j++) {
+                const cell = ws[XLSX.utils.encode_cell({ r: r0 + i, c: j })];
+                if (cell && cell.f && /\b(TODAY|NOW)\s*\(/i.test(cell.f)) todayCell = XLSX.utils.encode_cell({ r: r0 + i, c: j });
+            }
+            if (todayCell) add('warn', `Kuupäev (${todayCell}) on valem TODAY(): see muutub iga avamisega ja PDF-il on iga kord eri kuupäev. Kirjuta kuupäev käsitsi.`);
+
+            // --- andmeread
+            let zone = '', blocks = [], blk = null, grp = null, circ = null;
+            const zones = {}, circuits = [];
+            const sizes = {}; let seaTotal = 0;
+            const selCv = {}; // Aa/Av suhe -> luukide arv
+            const seaRes = { ok: 0, issues: [] };
+            const newBlock = () => { blk = { nr: '', name: '', total: NaN, groups: [], seen: {} }; blocks.push(blk); };
+            let end = rows.length;
+            for (let i = hr + 1; i < rows.length; i++) {
+                const r = rows[i];
+                if (r.some(c => /paigaldatud seadmete loetelu|toote kirjeldus|^sea arvutuse alus/i.test(txt(c)))) { end = i; break; }
+                if (r.every(c => txt(c) === '')) continue;
+                if (txt(r[C.zone]) && !/^SE\s*[–-]?\s*-?\d/i.test(txt(r[C.zone]))) { end = i; break; } // märkused tabeli all
+                if (txt(r[C.zone])) {
+                    zone = txt(r[C.zone]);
+                    if (!zones[zone]) {
+                        const m = zone.match(/[\d.]+\s*([LM])A?\s*(\d)/i);
+                        zones[zone] = { req: 0, stated: 0, sum: 0, hasStated: false, m2: 0, rows: [], buttons: {}, units: 0,
+                                        kind: m ? m[1].toUpperCase() : '', nameLevel: m ? +m[2] : NaN, level: NaN, komp: '' };
+                    }
+                    const Z0 = zones[zone];
+                    if (O.level >= 0 && has(r[O.level])) Z0.level = num(r[O.level]);
+                    if (O.komp >= 0 && has(r[O.komp])) Z0.komp = txt(r[O.komp]);
+                } else if (zone && C.area >= 0 && has(r[C.area])) {
+                    add('warn', `Rida ${xlRow(i)}: SE ala „${txt(r[C.area])}“ on ilma tsooni numbrita, arvestatud tsooni ${zone} alla. Kontrolli, kas see on sama tsoon (EVS 919 p 3.2: tähise esimene number = korrus).`);
+                }
+                if (!zone) continue;
+                const Z = zones[zone];
+                if (!isNaN(num(r[C.req])) && txt(r[C.req])) Z.req += num(r[C.req]);
+                if (!isNaN(num(r[C.act])) && txt(r[C.act])) { Z.stated += num(r[C.act]); Z.hasStated = true; }
+
+                // Pindala, koormus, tegur (EVS 919 tabel 9)
+                if (O.m2 >= 0 && has(r[O.m2])) {
+                    const a = num(r[O.m2]);
+                    if (!isNaN(a)) Z.m2 += a;
+                    const pv = O.pct >= 0 ? r[O.pct] : '';
+                    const pct = typeof pv === 'number' ? (pv < 0.1 ? pv * 100 : pv) : num(pv);
+                    Z.rows.push({ row: xlRow(i), ala: txt(r[C.area]), m2: a, load: O.load >= 0 ? txt(r[O.load]) : '', pct, req: num(r[C.req]) });
+                }
+
+                const g = txt(r[C.grp]);
+                if (g) {
+                    const gn = parseInt((g.match(/\d+/) || ['0'])[0], 10);
+                    if (!blk || blk.seen[gn]) newBlock(); // grupi number kordub -> uus juhtimiskeskus
+                    blk.seen[gn] = true;
+                    grp = { num: gn, zones: [], sel: 0, sea: 0, buttons: {} };
+                    blk.groups.push(grp);
+                }
+                if (!grp) continue;
+                if (!grp.zones.includes(zone)) grp.zones.push(zone);
+
+                const sj = r[C.sejk];
+                if (txt(sj)) {
+                    if (/^sejk\s*\S+/i.test(txt(sj))) blk.nr = txt(sj);
+                    else if (typeof sj === 'number' || /^[\d.,]+\s*a?$/i.test(txt(sj))) blk.total = num(sj);
+                    else if (/^sv/i.test(txt(sj)) || !blk.name) blk.name = txt(sj); // muu tekst (nt ruumi nr) ei kirjuta keskuse tüüpi üle
+                }
+                if (txt(r[C.btn])) { grp.buttons[txt(r[C.btn])] = true; Z.buttons[txt(r[C.btn])] = true; }
+
+                if (txt(r[C.circ])) {
+                    circ = { zone, grp: grp.num, blk: blocks.length, stated: num(r[C.circ]), sum: 0, row: xlRow(i),
+                             len: O.len >= 0 ? num(r[O.len]) : NaN, cs: O.cs >= 0 ? num(r[O.cs]) : NaN, cable: O.cable >= 0 ? txt(r[O.cable]) : '' };
+                    circuits.push(circ);
+                }
+                const l = txt(r[C.luuk]);
+                if (/^se[la]\b/i.test(l)) {
+                    const isSea = /^sea/i.test(l);
+                    const aa = num(r[C.aa]);
+                    Z.units++;
+                    if (isSea) {
+                        grp.sea++; seaTotal++;
+                        // SEA: Av mõõtudest, Cv EVS 919 tabeli B.1 järgi
+                        const d = txt(r[C.av]);
+                        const dim = d.match(/(\d{3,4})\s*[x×]\s*(\d{3,4})/);
+                        const av = num((d.match(/Av\s*([\d.,]+)/i) || [])[1]);
+                        const ang = num((d.match(/(\d+)\s*°/) || [])[1]);
+                        const dir = /sisse/i.test(d) ? 'sisse' : /välja/i.test(d) ? 'välja' : '';
+                        const cv = num((d.match(/Cv\s*([\d.,]+)/i) || [])[1]);
+                        const issues = [];
+                        if (dim && !isNaN(av) && Math.abs(dim[1] * dim[2] / 1e6 - av) > 0.01)
+                            issues.push(['err', `Av ${fmt(av)} m² ei vasta mõõtudele ${dim[1]}×${dim[2]} (${fmt(dim[1] * dim[2] / 1e6)} m²)`]);
+                        if (!isNaN(av) && !isNaN(cv) && !isNaN(aa) && Math.abs(av * cv - aa) > 0.01)
+                            issues.push(['err', `Aa ${fmt(aa)} m² ≠ Av × Cv = ${fmt(av * cv)} m²`]);
+                        if (isNaN(ang) || !dir || isNaN(cv)) {
+                            issues.push(['warn', 'avanemisnurka, suunda (välja/sisse) või Cv-d ei leitud, tabeli B.1 kontroll tegemata']);
+                        } else {
+                            const B1 = { 'välja': [[30, 0.25], [45, 0.3], [60, 0.4], [90, 0.5]], 'sisse': [[30, 0.2], [45, 0.25], [60, 0.3], [90, 0.4]] };
+                            const row = B1[dir].filter(x => x[0] <= ang).pop(); // vahepealne nurk -> väiksem nurk (ohutum)
+                            if (!row) issues.push(['err', `avanemisnurk ${ang}° on väiksem kui EVS 919 tabelis B.1 (min 30°)`]);
+                            else if (cv > row[1] + 1e-9) issues.push(['err', `Cv ${fmt(cv)} on suurem kui EVS 919 tabel B.1 lubab (${row[0]}° ${dir}: ${fmt(row[1])})`]);
+                        }
+                        if (issues.length) issues.forEach(([lv, t]) => seaRes.issues.push([lv, `${l} (${zone}): ${t}`]));
+                        else seaRes.ok++;
+                    } else {
+                        grp.sel++;
+                        const av = typeof r[C.av] === 'number' ? r[C.av] : num((txt(r[C.av]).match(/Av\s*([\d.,]+)/i) || [])[1]);
+                        const k = isNaN(av) ? '?' : fmt(av);
+                        sizes[k] = (sizes[k] || 0) + 1;
+                        if (!isNaN(av) && av > 0 && !isNaN(aa)) {
+                            const cv = aa / av;
+                            if (Math.abs(cv * 100 - Math.round(cv * 100)) < 1e-6) { const key = fmt(cv); selCv[key] = (selCv[key] || 0) + 1; }
+                        }
+                    }
+                    if (!isNaN(aa)) Z.sum += aa;
+                    if (circ && !isNaN(num(r[C.cur]))) circ.sum += num(r[C.cur]);
+                }
+            }
+
+            // --- struktuur meie registri kujul
+            const sejks = blocks.map((b, i) => ({
+                nr: b.nr || ('SEJK ' + (i + 1)),
+                name: b.name,
+                total: b.total,
+                grupps: b.groups.map(g => ({
+                    name: `Gr ${g.num} - ${g.zones.join(', ')}`,
+                    sel: g.sel ? String(g.sel) : '', sea: g.sea ? String(g.sea) : '',
+                    hoc: g.sea ? String(g.sea) : '',               // HOC = 1 iga SEA avatava osa kohta
+                    imcp: Object.keys(g.buttons).length ? String(Object.keys(g.buttons).length) : '',
+                    mcp: '', opus: '', wr: ''
+                }))
+            }));
+            const totalGroups = sejks.reduce((n, s) => n + s.grupps.length, 0);
+            const totalSel = Object.values(sizes).reduce((a, b) => a + b, 0);
+            const totalBtn = blocks.reduce((n, b) => n + b.groups.reduce((m, g) => m + Object.keys(g.buttons).length, 0), 0);
+            const zoneList = Object.entries(zones);
+
+            // --- kontroll 1: tsoonide efektiivne pindala
+            zoneList.forEach(([z, Z]) => {
+                if (Z.hasStated && Math.abs(Z.stated - Z.sum) > 0.01)
+                    add('err', `${z}: "SE avade tegelik Aa" on tabelis ${fmt(Z.stated)} m², luukide Aa summa on ${fmt(Z.sum)} m².`);
+                if (Z.req && Z.sum + 1e-9 < Z.req)
+                    add('warn', `${z}: luukide Aa ${fmt(Z.sum)} m² jääb nõutavale ${fmt(Z.req)} m² alla (puudu ${fmt(Z.req - Z.sum, 3)} m², ${fmt((Z.req - Z.sum) / Z.req * 100, 1)} %). EVS 919 tabel 9 lubatud kõrvalekallet ei anna.`);
+            });
+
+            // --- kontroll 2: nõutav Aa = pindala × tegur ja tegur EVS 919 tabeli 9 järgi (ruumi kõrgus kuni 10 m)
+            const table9 = load => {
+                const t = String(load || '').toLowerCase().replace(/\s+/g, '');
+                if (!t) return null;
+                if (/(>|üle)1200/.test(t)) return { k13: 2.0, k4: 1.0, label: '>1200' };
+                const ns = (t.match(/\d+/g) || []).map(Number).filter(n => n >= 100);
+                if (!ns.length) return null;
+                const mx = Math.max(...ns);
+                if (mx <= 300) return { k13: 0.25, k4: 0.15, label: 'kuni 300' };
+                if (mx <= 600) return { k13: 0.5, k4: 0.25, label: '300–600' };
+                if (mx <= 1200) return { k13: 1.0, k4: 0.5, label: '600–1200' };
+                return { k13: 2.0, k4: 1.0, label: '>1200' };
+            };
+            zoneList.forEach(([z, Z]) => {
+                Z.rows.forEach(x => {
+                    const where = `${z}${x.ala ? ' (' + x.ala + ')' : ''}`;
+                    if (!isNaN(x.m2) && !isNaN(x.pct) && !isNaN(x.req) && Math.abs(x.m2 * x.pct / 100 - x.req) > 0.01)
+                        add('err', `${where}: nõutav Aa ${fmt(x.req)} m² ≠ pindala × tegur = ${fmt(x.m2)} × ${fmt(x.pct)} % = ${fmt(x.m2 * x.pct / 100)} m².`);
+                    const t9 = table9(x.load);
+                    if (!t9 || isNaN(x.pct)) return;
+                    if (x.pct + 1e-9 < t9.k4)
+                        add('err', `${where}: SE avade tegur ${fmt(x.pct)} % on väiksem kui EVS 919 tabel 9 (${t9.label} MJ/m²: ${fmt(t9.k13)} %, kaitsetase 4: ${fmt(t9.k4)} %).`);
+                    else if (x.pct + 1e-9 < t9.k13)
+                        add('warn', `${where}: tegur ${fmt(x.pct)} % vastab EVS 919 tabelis 9 ainult kaitsetasemele 4 (automaatne kustutus). Kaitsetasemel 1–3 on nõue ${fmt(t9.k13)} %.`);
+                    else if (x.pct > t9.k13 + 1e-9)
+                        add('warn', `${where}: tegur ${fmt(x.pct)} % on suurem kui EVS 919 tabel 9 (${t9.label} MJ/m²: ${fmt(t9.k13)} %). Kontrolli allikat (TO projekt?).`);
+                });
+            });
+
+            // --- kontroll 3: tsooni suurim pindala ja luukide arv laepinna kohta
+            zoneList.forEach(([z, Z]) => {
+                const max = Z.kind === 'M' ? 2600 : Z.kind === 'L' ? 2000 : 0;
+                if (max && Z.m2 > max)
+                    add('err', `${z}: tsooni pindala ${fmt(Z.m2, 0)} m² ületab EVS 919 p 6.8.5 piiri (${Z.kind === 'L' ? 'loomulik' : 'mehaaniline'} ${max} m²).`);
+                if (Z.kind === 'L' && Z.m2 && Z.units && Z.units < Math.ceil(Z.m2 / 400))
+                    add('warn', `${z}: ${Z.units} luuki/akent ${fmt(Z.m2, 0)} m² kohta. EVS 919 p 6.11.2: laepinna iga 400 m² kohta vähemalt 1 luuk (vaja ${Math.ceil(Z.m2 / 400)}).`);
+                if (!isNaN(Z.level) && !isNaN(Z.nameLevel) && Z.level !== Z.nameLevel)
+                    add('warn', `${z}: tähises on käivitustase ${Z.nameLevel}, veerus „SE käivitustase“ ${Z.level}.`);
+            });
+
+            // --- kontroll 4: käivitusnupud ja infotabloo
+            // EVS 919 p 8.1.1: informatsiooni- ja juhtimistabloo on nõutav, kui tsoone on üle kolme või lahendusviis 3.
+            // Käivitustase 2 (p 8.1.28): vähemalt 2 juhtimispunkti -> 1 nupp + tabloo päästemeeskonna sisenemisteel.
+            // Käivitustase 3: piisab juhtimispunktist päästemeeskonna sisenemisteel.
+            const tabloNeeded = zoneList.length > 3 || zoneList.some(([, Z]) => Z.kind === 'M');
+            const btnZones = { one: [], none: [] };
+            zoneList.forEach(([z, Z]) => {
+                const lv = !isNaN(Z.level) ? Z.level : Z.nameLevel;
+                const n = Object.keys(Z.buttons).length;
+                if (!n) btnZones.none.push(z);
+                else if (lv === 2 && n < 2) btnZones.one.push(z);
+            });
+            if (btnZones.none.length) add('warn', `Käivitusnupp puudub tsoonides: ${btnZones.none.join(', ')}.`);
+            if (btnZones.one.length) {
+                if (tabloNeeded)
+                    add('ok', `Käivitustase 2: ${btnZones.one.length} tsoonis 1 käivitusnupp + infotabloo = 2 juhtimispunkti (EVS 919 p 8.1.1, 8.1.28). Tabloo päästemeeskonna sisenemisteel ei kuulu Keraplasti tarnesse – peab olema hoone projektis.`);
+                else
+                    add('warn', `Käivitustase 2: tsoonides ${btnZones.one.join(', ')} on 1 käivitusnupp. Tsoone on ${zoneList.length}, infotabloo pole EVS 919 p 8.1.1 järgi nõutav, seega on p 8.1.28 järgi üldjuhul vaja 2 käivitusnuppu.`);
+            }
+            if (tabloNeeded) add('warn', `Hoones on ${zoneList.length} SE tsooni${zoneList.some(([, Z]) => Z.kind === 'M') ? ' / lahendusviis 3' : ''}: EVS 919 p 8.1.1 järgi on nõutav informatsiooni- ja juhtimistabloo päästemeeskonna sisenemisteel (teiste osapoolte tarne). Kontrolli, et see on projektis.`);
+
+            // --- kontroll 5: kompensatsiooniõhk (EVS 919 p 6.14.1, 6.7.16, joonis F.24)
+            if (O.komp >= 0) {
+                const noArea = [];
+                zoneList.forEach(([z, Z]) => {
+                    if (!Z.komp) return;
+                    const a = num(Z.komp);
+                    if (isNaN(a)) noArea.push(z);
+                    else if (a + 1e-9 < Z.sum) add('warn', `${z}: kompensatsiooniõhu pindala ${fmt(a)} m² on väiksem kui luukide Aa ${fmt(Z.sum)} m² (EVS 919 p 6.14.1).`);
+                });
+                if (noArea.length) {
+                    const big = zoneList.filter(([z]) => noArea.includes(z)).sort((a, b) => b[1].sum - a[1].sum)[0];
+                    add('warn', `Kompensatsiooniõhu pindala pole antud (${noArea.length} tsooni, nt „${zones[big[0]].komp}“). EVS 919 p 6.14.1 ja 6.7.16: efektiivpindala vähemalt tsooni luukide Aa; suurim ${big[0]}: ${fmt(big[1].sum)} m².`);
+                }
+            }
+
+            // --- kontroll 6: SEA (EVS 919 tabel B.1) ja SEL Aa allikas
+            seaRes.issues.forEach(([lv, t]) => add(lv, t));
+            if (seaRes.ok) add('ok', `SEA (${seaRes.ok} tk): Av, Aa ja Cv vastavad EVS 919 tabelile B.1 (kehtib alaservast hingedega, EN 12101-2 järgi testimata akendele).`);
+            Object.entries(selCv).forEach(([cv, n]) => {
+                add('warn', `SEL Aa on arvutatud Av × ${cv} (${n} luuki). EVS 919 lisa E.2 ja B.3: kasuta toimivusdeklaratsiooni (DoP) või CE-märgise Aa väärtust.`);
+            });
+
+            // --- kontroll 7: toiteahelate vool
+            circuits.forEach(c => {
+                if (!isNaN(c.stated) && Math.abs(c.stated - c.sum) > 0.05)
+                    add('err', `${c.zone} (Gr ${c.grp}): toiteahela vool tabelis ${fmt(c.stated, 1)} A, luukide voolude summa ${fmt(c.sum, 1)} A.`);
+            });
+            blocks.forEach((b, i) => {
+                const own = circuits.filter(c => c.blk === i + 1);
+                const sum = own.reduce((n, c) => n + (isNaN(c.stated) ? 0 : c.stated), 0);
+                const label = `${sejks[i].nr}${b.name ? ' ' + b.name : ''}`;
+                if (!isNaN(b.total) && Math.abs(b.total - sum) > 0.05)
+                    add('err', `${sejks[i].nr}: koguvool tabelis ${fmt(b.total, 1)} A, ahelate summa ${fmt(sum, 1)} A.`);
+                const nom = num((b.name.match(/(\d+)\s*A\b/i) || [])[1]);
+                if (!isNaN(nom)) {
+                    if (sum > nom + 1e-9) add('err', `${label}: ahelate vool ${fmt(sum, 1)} A ületab keskuse nimivoolu ${nom} A.`);
+                    else add('ok', `${label}: ahelate vool ${fmt(sum, 1)} A / ${nom} A.`);
+                }
+                if (/svl/i.test(b.name)) {
+                    const perGrp = {};
+                    own.forEach(c => { perGrp[c.grp] = (perGrp[c.grp] || 0) + (isNaN(c.stated) ? 0 : c.stated); });
+                    Object.entries(perGrp).forEach(([g, a]) => {
+                        if (a > 25) add('err', `${label} Gr ${g}: grupi vool ${fmt(a, 1)} A ületab SVL väljundi 25 A (SVL juhend, kaitse F2–F7).`);
+                    });
+                }
+            });
+
+            // --- kontroll 8: kaabli ristlõige (SVL juhend lk 16–17: pingelang max 15 %, Cu ρ = 0,0183)
+            if (O.len >= 0) {
+                const STD = [1.5, 2.5, 4, 6, 10, 16];
+                let okN = 0;
+                circuits.forEach(c => {
+                    if (isNaN(c.len) || isNaN(c.stated)) return;
+                    const b = blocks[c.blk - 1] || { name: '' };
+                    const U = num((b.name.match(/(\d+)\s*V\b/i) || [])[1]) || 48;
+                    const need = 0.0183 * 2 * c.len * c.stated / (0.15 * U);
+                    const where = `${c.zone} (Gr ${c.grp}, ahel ${fmt(c.len, 0)} m, ${fmt(c.stated, 1)} A)`;
+                    if (!isNaN(c.cs) && Math.abs(c.cs - need) > 0.02) add('err', `${where}: ristlõige tabelis ${fmt(c.cs)} mm², arvutus ${fmt(need)} mm² (${U} V, pingelang 15 %).`);
+                    const m = c.cable.match(/\d+\s*[x×]\s*([\d.,]+)/);
+                    const got = m ? num(m[1]) : NaN;
+                    const next = STD.find(s => s + 1e-9 >= need);
+                    if (!isNaN(got)) {
+                        if (got + 1e-9 < need) add('err', `${where}: kaabel ${c.cable} (${fmt(got)} mm²) on väiksem kui nõutav ${fmt(need)} mm².`);
+                        else okN++;
+                    } else if (need > 2.5) {
+                        add('warn', `${where}: nõutav ristlõige ${fmt(need)} mm² → kaabel vähemalt ${next ? fmt(next) : '>16'} mm² (SVL juhend lk 16–17).`);
+                    } else okN++;
+                });
+                if (okN) add('ok', `Kaabli ristlõige: ${okN} ahelat klapib (pingelang kuni 15 %).`);
+            }
+
+            // --- kontroll 9: "Paigaldatud seadmete loetelu" vs tabeli read
+            const list = [];
+            for (let i = end; i < rows.length; i++) {
+                const r = rows[i];
+                const c = r.findIndex(x => /paigaldatud seadmete loetelu|toote kirjeldus/i.test(txt(x)));
+                if (c >= 0) {
+                    for (let j = i + 1; j < rows.length; j++) {
+                        const d = rows[j][c], q = rows[j][c + 1];
+                        if (txt(d) === '' && txt(q) === '') break;
+                        list.push({ desc: d, qty: num(q) });
+                    }
+                    break;
+                }
+            }
+            const centers = sejks.length;
+            list.forEach(({ desc, qty }) => {
+                const d = txt(desc);
+                let expected = NaN, label = d, note = '';
+                if (typeof desc === 'number' || /^[\d.,]+$/.test(d) || /orivent|suitsuluuk/i.test(d) && /Av\s*[\d.,]+/i.test(d)) {
+                    const av = typeof desc === 'number' ? desc : num((d.match(/Av\s*([\d.,]+)/i) || [null, d])[1]);
+                    expected = sizes[fmt(av)] || 0; label = `SEL Av ${fmt(av)} m²`;
+                } else if (/\bSEA\b/i.test(d)) { expected = seaTotal; label = 'SEA'; }
+                else if (/juhtimiskeskus/i.test(d)) {
+                    const m = d.match(/SVL\s*\S+/i);
+                    expected = m ? sejks.filter(s => s.name.replace(/\s/g, '').toLowerCase().includes(m[0].replace(/\s/g, '').toLowerCase())).length : NaN;
+                } else if (/rühmakaart/i.test(d)) {
+                    expected = totalGroups - 2 * centers; note = ' (eeldusel: keskuses on 2 gruppi, iga kaart lisab 1 grupi)';
+                } else if (/käivitusnupp|imcp/i.test(d)) { expected = totalBtn; label = 'Käivitusnupp iMCP'; }
+                if (isNaN(expected)) return;
+                if (expected !== qty) add('err', `Seadmete loetelus "${label}" ${qty} tk, tabeli ridade järgi ${expected} tk${note}.`);
+                else add('ok', `${label}: ${qty} tk klapib.`);
+            });
+            if (!list.length) add('warn', 'Tabelis puudub "Paigaldatud seadmete loetelu", koguseid ei saanud võrrelda.');
+
+            const order = { err: 0, warn: 1, ok: 2 };
+            checks.sort((a, b) => order[a.level] - order[b.level]);
+            return {
+                meta, address: meta.address, object: meta.objectType, sejks, checks,
+                totals: { sel: totalSel, sizes, sea: seaTotal, buttons: totalBtn, groups: totalGroups, centers }
+            };
+        }
+
+        // Muudatused registri seisu ja uue struktuuri vahel: [{what, from, to}]
+        function diffStructure(oldSejks, newSejks) {
+            const out = [];
+            const keys = ['sel', 'sea', 'hoc', 'imcp', 'mcp', 'opus', 'wr'];
+            const labels = { sel: 'SEL', sea: 'SEA', hoc: 'HOC', imcp: 'iMCP', mcp: 'MCP', opus: 'OPUS', wr: 'W&R' };
+            const n = v => { const x = parseFloat(String(v || '').replace(',', '.')); return isNaN(x) ? 0 : x; };
+            const sid = (s, i) => (s.nr || '').trim().toLowerCase() || ('#' + i);
+            const used = new Set();
+            (newSejks || []).forEach((ns, i) => {
+                let oi = (oldSejks || []).findIndex((os, j) => !used.has(j) && sid(os, j) === sid(ns, i));
+                if (oi < 0) {
+                    out.push({ what: `Lisandus keskus ${[ns.nr, ns.name].filter(Boolean).join(' ')}`, from: '', to: `${(ns.grupps || []).length} gruppi` });
+                    return;
+                }
+                used.add(oi);
+                const os = oldSejks[oi];
+                const tag = ns.nr || os.nr || `Keskus ${i + 1}`;
+                if ((os.name || '').trim() !== (ns.name || '').trim())
+                    out.push({ what: `${tag}: juhtimiskeskus`, from: os.name || '', to: ns.name || '' });
+                const og = os.grupps || [], ng = ns.grupps || [];
+                const gUsed = new Set();
+                ng.forEach((g, k) => {
+                    let gi = og.findIndex((x, j) => !gUsed.has(j) && (x.name || '').trim() === (g.name || '').trim());
+                    if (gi < 0 && k < og.length && !gUsed.has(k)) gi = k;
+                    if (gi < 0) { out.push({ what: `${tag}: lisandus grupp`, from: '', to: g.name || '' }); return; }
+                    gUsed.add(gi);
+                    const o = og[gi];
+                    if ((o.name || '').trim() !== (g.name || '').trim()) out.push({ what: `${tag}: grupi nimi`, from: o.name || '', to: g.name || '' });
+                    keys.forEach(key => {
+                        if (n(o[key]) !== n(g[key])) out.push({ what: `${tag} / ${g.name || o.name}: ${labels[key]}`, from: String(n(o[key])), to: String(n(g[key])) });
+                    });
+                });
+                og.forEach((o, j) => { if (!gUsed.has(j)) out.push({ what: `${tag}: grupp eemaldatud`, from: o.name || '', to: '' }); });
+            });
+            (oldSejks || []).forEach((os, j) => { if (!used.has(j)) out.push({ what: `Keskus eemaldatud ${[os.nr, os.name].filter(Boolean).join(' ')}`, from: `${(os.grupps || []).length} gruppi`, to: '' }); });
+            return out;
+        }
+
+        // ===== Ühised abifunktsioonid =====
+        function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+        function openModal(id) { document.getElementById(id).classList.add('show'); }
+
+        // POST Apps Scripti; kui vastust ei saa lugeda (CORS), saadetakse uuesti "no-cors" režiimis
+        async function postJson(payload) {
+            const body = JSON.stringify(payload);
+            try {
+                const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body });
+                return await res.json();
+            } catch (e) {
+                await fetch(API_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body });
+                return { success: null };
+            }
+        }
+
+        function fileToDataUrl(file) {
+            return new Promise((resolve, reject) => {
+                const fr = new FileReader();
+                fr.onload = () => resolve(fr.result);
+                fr.onerror = reject;
+                fr.readAsDataURL(file);
+            });
+        }
+
+        // ===== Põhinäitajate tabeli import =====
+        let lastImport = null;
+
+        async function importXlsx(file) {
+            if (!file) return;
+            if (!window.XLSX) { showToast('⚠ Exceli lugeja ei laadinud (internet?)'); return; }
+            try {
+                const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+                const parsed = parsePohinaitajad(wb);
+                lastImport = { parsed, file };
+                renderImport();
+                openModal('importModal');
+            } catch (e) {
+                console.error(e);
+                showToast('⚠ ' + e.message);
+            }
+        }
+
+        function renderImport() {
+            const { parsed, file } = lastImport;
+            const m = parsed.meta;
+            const key = objKey(parsed.address);
+            const existing = objects.find(o => o.key === key);
+            const changes = existing ? diffStructure(existing.sejks || [], parsed.sejks) : [];
+            const errs = parsed.checks.filter(c => c.level === 'err').length;
+            const warns = parsed.checks.filter(c => c.level === 'warn').length;
+            const t = parsed.totals;
+            document.getElementById('importBody').innerHTML = `
+                <div class="muted">${escapeHtml(file.name)}</div>
+                <div class="card-sec">
+                    <label class="info-label">Aadress (koos linna/vallaga)</label>
+                    <input id="impAddress" class="info-input" value="${escapeHtml(parsed.address)}">
+                    <label class="info-label" style="margin-top:0.5rem">Objekt</label>
+                    <input id="impObject" class="info-input" value="${escapeHtml(existing ? existing.object : parsed.object)}">
+                    <label class="info-label" style="margin-top:0.5rem">Tellija</label>
+                    <input id="impClient" class="info-input" value="${escapeHtml(existing ? existing.client : '')}" placeholder="nt Maru Ehitus AS">
+                </div>
+                <div class="card-sec"><h4>Projekt</h4><div class="kv">
+                    <span>Töö nr</span><span>${escapeHtml(m.projectNo)}</span>
+                    <span>TO projekt</span><span>${escapeHtml(m.designer)}</span>
+                    <span>Koostas</span><span>${escapeHtml(m.compiledBy)} ${escapeHtml(m.date || '')} ${escapeHtml(m.version || '')}</span>
+                    <span>Kokku</span><span>${t.centers} keskust, ${t.groups} gruppi, ${t.sel} SEL, ${t.sea} SEA, ${t.buttons} nuppu</span>
+                </div></div>
+                <div class="card-sec"><h4>Tabeli kontroll (${errs} viga, ${warns} hoiatust)</h4>
+                    ${parsed.checks.map(c => `<div class="chk ${c.level}">${c.level === 'err' ? '✗' : c.level === 'warn' ? '!' : '✓'} ${escapeHtml(c.text)}</div>`).join('')}
+                </div>
+                <div class="card-sec"><h4>Registrisse läheb</h4>
+                    <table class="card-tbl"><tr><th>SEJK</th><th>Grupp</th><th>SEL</th><th>SEA</th><th>HOC</th><th>iMCP</th></tr>
+                    ${parsed.sejks.map(s => s.grupps.map((g, i) => `<tr><td>${i ? '' : escapeHtml(s.nr + ' ' + s.name)}</td><td>${escapeHtml(g.name)}</td><td>${g.sel}</td><td>${g.sea}</td><td>${g.hoc}</td><td>${g.imcp}</td></tr>`).join('')).join('')}
+                    </table>
+                </div>
+                ${existing ? `<div class="card-sec"><h4>Objekt on registris olemas – muudatused (${changes.length})</h4>
+                    ${changes.length ? changes.map(c => `<div class="chk warn">${escapeHtml(c.what)}: ${escapeHtml(c.from)} → ${escapeHtml(c.to)}</div>`).join('') : '<div class="muted">Struktuur on sama.</div>'}
+                </div>` : ''}
+                <div class="planner-foot">
+                    <button class="btn btn-success" onclick="saveImport()">💾 Salvesta registrisse ja kausta</button>
+                </div>`;
+        }
+
+        async function saveImport() {
+            const { parsed, file } = lastImport;
+            const address = document.getElementById('impAddress').value.trim();
+            if (!address) { showToast('⚠ Lisa aadress'); return; }
+            const key = objKey(address);
+            const existing = objects.find(o => o.key === key);
+            const data = {
+                address, object: document.getElementById('impObject').value.trim(),
+                client: document.getElementById('impClient').value.trim(),
+                sejks: parsed.sejks.map(s => ({ nr: s.nr, name: s.name, grupps: s.grupps })),
+                meta: Object.assign({}, parsed.meta, { checks: parsed.checks.filter(c => c.level !== 'ok').map(c => c.text) }),
+                workDate: new Date().toLocaleDateString('et-EE'), workNumber: parsed.meta.projectNo || '',
+                compiler: document.getElementById('compiler').value || 'import',
+                changes: existing ? diffStructure(existing.sejks || [], parsed.sejks).map(c => Object.assign(c, { what: 'Import: ' + c.what })) : []
+            };
+            showToast('📤 Salvestan...');
+            const res = await postJson({ action: 'importObject', data });
+            if (res.success === false) { showToast('⚠ ' + res.message); return; }
+            const up = await postJson({ action: 'uploadFile', data: { address, category: '2 Projekt', filename: file.name, mime: file.type, base64: await fileToDataUrl(file) } });
+            // kohalik register
+            const rec = { key, address, object: data.object, client: data.client, sejks: data.sejks,
+                          lastDate: existing ? existing.lastDate : '', lastWork: existing ? existing.lastWork : '', contract: existing ? existing.contract : false };
+            const i = objects.findIndex(o => o.key === key);
+            if (i >= 0) objects[i] = rec; else objects.push(rec);
+            try { localStorage.setItem(OBJ_CACHE, JSON.stringify(objects)); } catch (e) {}
+            populateObjSelect();
+            document.getElementById('objSelect').value = key;
+            loadObject(key);
+            closeModal('importModal');
+            showToast(up.success === false ? '⚠ Objekt salvestatud, faili üleslaadimine ebaõnnestus' : '✓ Objekt ja tabel salvestatud');
+        }
+
+        // ===== Objekti kaart =====
+        let cardKey = '';
+
+        async function openCard(key) {
+            key = key || document.getElementById('objSelect').value || objKey(document.getElementById('address').value);
+            if (!key) { showToast('⚠ Vali enne objekt'); return; }
+            cardKey = key;
+            document.getElementById('cardBody').innerHTML = '<div class="muted">Laadin...</div>';
+            openModal('cardModal');
+            try {
+                const res = await fetch(`${API_URL}?action=card&key=${encodeURIComponent(key)}`);
+                const json = await res.json();
+                if (!json.success) throw new Error(json.message || 'viga');
+                renderCard(json.card);
+            } catch (e) {
+                console.error(e);
+                const o = objects.find(x => x.key === key);
+                document.getElementById('cardBody').innerHTML = `<div class="chk warn">Kaarti ei saanud laadida (võrguühendus?). ${o ? 'Näitan salvestatud andmeid.' : ''}</div>` +
+                    (o ? cardStructure(o) : '');
+            }
+        }
+
+        function cardStructure(o) {
+            const sum = k => (o.sejks || []).reduce((n, s) => n + s.grupps.reduce((m, g) => m + (parseFloat(g[k]) || 0), 0), 0);
+            return `<div class="card-sec"><h4>Süsteem</h4>
+                <table class="card-tbl"><tr><th>SEJK</th><th>Gruppe</th><th>SEL</th><th>SEA</th><th>iMCP</th></tr>
+                ${(o.sejks || []).map(s => {
+                    const t = k => s.grupps.reduce((m, g) => m + (parseFloat(g[k]) || 0), 0);
+                    return `<tr><td>${escapeHtml([s.nr, s.name].filter(Boolean).join(' '))}</td><td>${s.grupps.length}</td><td>${t('sel')}</td><td>${t('sea')}</td><td>${t('imcp')}</td></tr>`;
+                }).join('')}
+                <tr><th>Kokku</th><th></th><th>${sum('sel')}</th><th>${sum('sea')}</th><th>${sum('imcp')}</th></tr></table></div>`;
+        }
+
+        function renderCard(c) {
+            const o = c.object || { address: cardKey, sejks: [] };
+            const m = c.meta || {};
+            const fileList = cat => (c.files[cat] || []).length
+                ? (c.files[cat]).map(f => `<div><a class="file-link" href="${escapeHtml(f.url)}" target="_blank">${escapeHtml(f.name)}</a> <span class="muted">${escapeHtml(f.date)}</span></div>`).join('')
+                : '<div class="muted">–</div>';
+            document.getElementById('cardBody').innerHTML = `
+                <div class="plan-addr">${escapeHtml(o.address)}</div>
+                <div class="plan-sub">${escapeHtml(o.object || '')}${o.client ? ' · ' + escapeHtml(o.client) : ''}</div>
+                <div class="plan-sub">${o.contract ? 'Hooldusleping ✓' : 'Hooldusleping puudub'}${o.lastDate ? ' · viimati ' + escapeHtml(o.lastDate) : ''}</div>
+                ${c.folderUrl ? `<div style="margin-top:0.4rem"><a class="file-link" href="${escapeHtml(c.folderUrl)}" target="_blank">📂 Ava kaust Drive'is</a></div>` : ''}
+                ${m.projectNo ? `<div class="card-sec"><h4>Projekt</h4><div class="kv">
+                    <span>Töö nr</span><span>${escapeHtml(m.projectNo)}</span>
+                    <span>TO projekt</span><span>${escapeHtml(m.designer || '')}</span>
+                    <span>Tabel</span><span>${escapeHtml([m.compiledBy, m.date, m.version].filter(Boolean).join(' · '))}</span>
+                </div>${(m.checks || []).length ? `<div style="margin-top:0.4rem">${m.checks.map(t => `<div class="chk warn">${escapeHtml(t)}</div>`).join('')}</div>` : ''}</div>` : ''}
+                ${cardStructure(o)}
+                <div class="card-sec"><h4>Failid</h4>
+                    ${c.categories.map(cat => `<div style="margin-bottom:0.5rem"><div class="muted">${escapeHtml(cat)}</div>${fileList(cat)}</div>`).join('')}
+                    <div class="upload-row">
+                        <select id="cardCat" class="info-input">${c.categories.map(cat => `<option>${escapeHtml(cat)}</option>`).join('')}</select>
+                        <input type="file" id="cardFile" class="info-input" multiple>
+                    </div>
+                    <button class="plan-btn small" onclick="uploadCardFiles()">⬆️ Lisa failid kausta</button>
+                </div>
+                <div class="card-sec"><h4>Aktid (${c.acts.length})</h4>
+                    ${c.acts.length ? `<table class="card-tbl"><tr><th>Kuupäev</th><th>Töö nr</th><th>Liik</th><th>Staatus</th><th></th></tr>
+                    ${c.acts.map(a => `<tr><td>${escapeHtml(a.date)}</td><td>${escapeHtml(a.work)}</td><td>${escapeHtml(a.type)}</td><td>${escapeHtml(a.status)}</td>
+                        <td>${/^https?:/.test(a.pdf) ? `<a href="${escapeHtml(a.pdf)}" target="_blank">PDF</a>` : ''}</td></tr>`).join('')}</table>` : '<div class="muted">Akte pole veel.</div>'}
+                </div>
+                <div class="card-sec"><h4>Muudatused (${c.changes.length})</h4>
+                    ${c.changes.length ? `<table class="card-tbl"><tr><th>Kuupäev</th><th>Muudatus</th><th>Oli</th><th>Uus</th></tr>
+                    ${c.changes.map(x => `<tr><td>${escapeHtml(x.date)}<div class="muted">${escapeHtml(x.work)} ${escapeHtml(x.compiler)}</div></td><td>${escapeHtml(x.what)}</td><td>${escapeHtml(x.from)}</td><td>${escapeHtml(x.to)}</td></tr>`).join('')}</table>` : '<div class="muted">Muudatusi pole.</div>'}
+                </div>`;
+        }
+
+        async function uploadCardFiles() {
+            const files = Array.from(document.getElementById('cardFile').files || []);
+            if (!files.length) { showToast('⚠ Vali fail(id)'); return; }
+            const o = objects.find(x => x.key === cardKey);
+            const address = o ? o.address : document.getElementById('address').value;
+            const category = document.getElementById('cardCat').value;
+            for (const f of files) {
+                if (f.size > 35 * 1024 * 1024) { showToast(`⚠ ${f.name} on liiga suur (max 35 MB)`); continue; }
+                showToast(`📤 ${f.name}...`);
+                const res = await postJson({ action: 'uploadFile', data: { address, category, filename: f.name, mime: f.type, base64: await fileToDataUrl(f) } });
+                if (res.success === false) showToast('⚠ ' + res.message);
+            }
+            showToast('✓ Failid lisatud');
+            openCard(cardKey);
         }
 
         // Add first SEJK on load
