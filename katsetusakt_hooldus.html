@@ -1351,23 +1351,6 @@
             // Muudatused võrreldes registriga (seadmete arv, grupid, keskused)
             const baseline = objects.find(o => o.key === objKey(data.address));
             data.changes = baseline ? diffStructure(baseline.sejks || [], data.sejks.map(s => ({ nr: s.nr, name: s.name, grupps: s.grupps }))) : [];
-            if (data.changes.length) {
-                if (finalY > 150) { doc.addPage(); finalY = 15; }
-                doc.setFontSize(10);
-                doc.setTextColor(0, 0, 0);
-                doc.text('Muudatused võrreldes eelmise aktiga / registriga:', 10, finalY + 4);
-                doc.autoTable({
-                    startY: finalY + 7,
-                    head: [['Muudatus', 'Oli', 'Uus']],
-                    body: data.changes.map(c => [c.what, c.from, c.to]),
-                    theme: 'grid',
-                    styles: { fontSize: 8, cellPadding: 1.5 },
-                    headStyles: { fillColor: [237, 106, 94], textColor: [255, 255, 255] },
-                    columnStyles: { 0: { cellWidth: 150 }, 1: { cellWidth: 40 }, 2: { cellWidth: 40 } },
-                    margin: { left: 10 }
-                });
-                finalY = doc.lastAutoTable.finalY + 5;
-            }
 
             // Add photos
             const sejksWithPhotos = data.sejks.filter(sejk => sejk.photos && sejk.photos.length > 0);
@@ -1407,6 +1390,28 @@
                     });
 
                     y += 45;
+                });
+            }
+
+            // Muudatused eraldi viimasel lehel: sisemine info kontorile ja laole, akti printimisel/saatmisel võib selle lehe ära jätta
+            if (data.changes.length) {
+                doc.addPage();
+                doc.setFontSize(12);
+                doc.setTextColor(0, 0, 0);
+                doc.text('Muudatused võrreldes eelmise aktiga / registriga', 10, 15);
+                doc.setFontSize(8);
+                doc.setTextColor(102, 102, 102);
+                doc.text(`Sisemine info (kontor, ladu) – ei ole akti osa. ${data.address || ''} · töö nr ${data.workNumber || ''} · ${data.workDate || ''}`, 10, 21);
+                doc.setTextColor(0, 0, 0);
+                doc.autoTable({
+                    startY: 25,
+                    head: [['Muudatus', 'Oli', 'Uus']],
+                    body: data.changes.map(c => [c.what, c.from, c.to]),
+                    theme: 'grid',
+                    styles: { fontSize: 8, cellPadding: 1.5 },
+                    headStyles: { fillColor: [237, 106, 94], textColor: [255, 255, 255] },
+                    columnStyles: { 0: { cellWidth: 150 }, 1: { cellWidth: 40 }, 2: { cellWidth: 40 } },
+                    margin: { left: 10 }
                 });
             }
 
@@ -1764,12 +1769,73 @@
                     gEl.querySelector('.grupp-title-input').value = g.name || '';
                     const inputs = gEl.querySelectorAll('.field-input');
                     ['sel', 'sea', 'hoc', 'imcp', 'mcp', 'opus', 'wr'].forEach((k, i) => { inputs[i].value = g[k] || ''; });
+                    // Parandamisel ka testid, vead ja aku (uuel hooldusel jäävad vaikimisi „k“ ja tühi)
+                    if (o.withTests) ['haire', 'taastus', 'asend', 'vTsoon', 'toide', 'akud', 'acbat', 'aku'].forEach((k, i) => {
+                        if (g[k] !== undefined && g[k] !== null) inputs[7 + i].value = g[k];
+                    });
                 });
             });
             if (!(o.sejks || []).length) addSejk();
         }
 
         // "— Uus objekt —": tühi vorm uue objekti jaoks
+        // ===== Viimase akti parandamine (algandmed jäävad, salvestamisel asendab vana akti) =====
+        let editingAct = null;
+
+        function setEditing(act) {
+            editingAct = act;
+            let bar = document.getElementById('editBar');
+            if (!bar) {
+                document.getElementById('objInfo').insertAdjacentHTML('afterend', '<div id="editBar" class="chk warn" style="margin-top:0.5rem"></div>');
+                bar = document.getElementById('editBar');
+            }
+            if (!act) { bar.style.display = 'none'; return; }
+            bar.style.display = 'block';
+            bar.innerHTML = `✏️ Parandad akti töö nr ${escapeHtml(act.workNumber || '–')}, ${escapeHtml(act.workDate)}. Salvestamisel asendatakse vana akt ja PDF. Allkirjasta uuesti. <a href="#" onclick="cancelEdit();return false" style="color:inherit">Tühista</a>`;
+        }
+
+        function cancelEdit() {
+            const key = document.getElementById('objSelect').value;
+            setEditing(null);
+            loadObject(key);
+        }
+
+        async function editLastAct(key) {
+            showToast('📥 Laadin viimast akti...');
+            try {
+                const res = await fetch(`${API_URL}?action=lastAct&key=${encodeURIComponent(key)}`);
+                const json = await res.json();
+                let a = json.act;
+                if (!json.success) {
+                    // Vanem akt (enne 20.11.2026): täielikku sisu pole, võtame registrist struktuuri + töö nr ja kuupäeva
+                    const o = objects.find(x => x.key === key);
+                    if (!o || !o.lastDate) { showToast('⚠ ' + (json.message || 'Viimast akti ei leitud')); return; }
+                    a = { workNumber: o.lastWork || '', workDate: o.lastDate, object: o.object, address: o.address, client: o.client,
+                          compiler: o.compiler || '', workType: '', systemStatus: 'k', notes: '', sejks: o.sejks || [] };
+                    try { // töö liik, olek ja märkused aktide lehelt
+                        const cj = await (await fetch(`${API_URL}?action=card&key=${encodeURIComponent(key)}`)).json();
+                        const x = cj.success && (cj.card.acts || []).find(r => r.work === a.workNumber && r.date === a.workDate);
+                        if (x) Object.assign(a, { workType: x.type || '', notes: x.notes || '', compiler: x.compiler || a.compiler,
+                            systemStatus: /puud/i.test(x.status) ? 'p' : 'k' });
+                    } catch (e) {}
+                    setTimeout(() => showToast('⚠ Vana akt: testide tulemused ja aku pole salvestatud, täida need uuesti'), 2100);
+                }
+                fillFormFromObject({ object: a.object, address: a.address, client: a.client, sejks: a.sejks, withTests: true });
+                document.getElementById('workNumber').value = a.workNumber || '';
+                document.getElementById('workDate').value = a.workDate || '';
+                document.getElementById('notes').value = a.notes || '';
+                if (a.compiler) document.getElementById('compiler').value = a.compiler;
+                document.querySelectorAll('.work-type-btns .work-type-btn').forEach(b => { if (b.textContent.trim() === a.workType) selectWorkType(b, a.workType); });
+                document.querySelectorAll('.status-btns .work-type-btn').forEach(b => { if (b.textContent.includes(`(${a.systemStatus})`)) selectStatus(b, a.systemStatus); });
+                clearSignature();
+                setEditing(a);
+                showToast('✓ Viimane akt laaditud parandamiseks');
+            } catch (e) {
+                console.error(e);
+                showToast('⚠ Võrguühendus puudub, viimast akti ei saa laadida');
+            }
+        }
+
         function resetForm() {
             ['workNumber', 'object', 'address', 'client', 'notes'].forEach(id => { document.getElementById(id).value = ''; });
             document.getElementById('workDate').value = new Date().toLocaleDateString('et-EE');
@@ -1789,11 +1855,13 @@
 
         function loadObject(key) {
             const info = document.getElementById('objInfo');
+            setEditing(null);
             if (!key) { info.textContent = ''; resetForm(); return; }
             const o = objects.find(x => x.key === key);
             if (!o) return;
             fillFormFromObject(o);
-            info.textContent = dueInfo(o).text;
+            info.innerHTML = escapeHtml(dueInfo(o).text) + (o.lastDate
+                ? `<button class="plan-btn small" onclick="editLastAct('${escapeHtml(o.key).replace(/'/g, '&#39;')}')">✏️ Paranda viimast akti (töö nr ${escapeHtml(o.lastWork || '–')}, ${escapeHtml(o.lastDate)})</button>` : '');
             showToast('✓ Objekt laaditud');
         }
 
@@ -1806,6 +1874,7 @@
                     address: data.address, client: data.client, compiler: data.compiler,
                     workType: data.workType, systemStatus: data.systemStatus, notes: data.notes,
                     pdfFilename: pdfFilename,
+                    replace: editingAct ? { work: editingAct.workNumber || '', date: editingAct.workDate || '' } : undefined,
                     pdfBase64: data.pdfBase64 || '',
                     changes: data.changes || [],
                     sejks: data.sejks.map(s => ({ num: s.num, nr: s.nr, name: s.name, photoCount: s.photos.length, grupps: s.grupps }))
@@ -1829,7 +1898,8 @@
             try {
                 // text/plain = lihtpäring, töötab Apps Scriptiga ka iPhone'is
                 await fetch(API_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
-                showToast('✓ Akt ja objekt salvestatud');
+                showToast(editingAct ? '✓ Parandatud akt salvestatud (vana asendatud)' : '✓ Akt ja objekt salvestatud');
+                setEditing(null);
             } catch (e) {
                 console.error('Salvestamine:', e);
                 showToast('⚠ Sheetsi saatmine ebaõnnestus (PDF on salvestatud)');
@@ -1915,6 +1985,7 @@
             };
             const has = v => txt(v) !== '';
             const fmt = (v, d = 2) => (Math.round(v * 10 ** d) / 10 ** d).toString().replace('.', ',');
+            const nBtn = o => Object.values(o).reduce((n, v) => n + (+v || 0), 0); // käivitusnuppude arv
             const checks = [];
             const add = (level, text, cells) => checks.push({ level, text, cells: (cells || []).filter(Boolean) });
 
@@ -1935,7 +2006,7 @@
                 circ: col(h => h.includes('toite') || h === 'ahel'),
                 grp: col(h => h === 'grupp'),
                 sejk: col(h => h.includes('sejk')),
-                btn: col(h => h.includes('nupp'))
+                btn: col(h => h.includes('nupp') || h === 'juhtimine')
             };
             const missing = Object.keys(C).filter(k => C[k] < 0);
             if (missing.length) throw new Error('Tabelist puuduvad veerud: ' + missing.join(', '));
@@ -1989,16 +2060,25 @@
             // --- andmeread
             let zone = '', blocks = [], blk = null, grp = null, circ = null;
             const zones = {}, circuits = [];
-            const sizes = {}; let seaTotal = 0;
+            const sizes = {}, aaBySize = {}; let seaTotal = 0;
             const selCv = {}; // Aa/Av suhe -> luukide arv
-            const seaRes = { ok: 0, issues: [] };
+            const seaRes = { ok: 0, issues: [] }; let o70ok = 0;
             const newBlock = () => { blk = { nr: '', name: '', total: NaN, groups: [], seen: {} }; blocks.push(blk); };
+            // Keskuse plokid SEJK veeru summavalemist (nt S16 =SUM(N5:N16)): usaldusväärsem kui grupi numbri kordumine
+            const sumBlocks = [];
+            for (let i = hr + 1; i < rows.length; i++) {
+                const cell = ws[XLSX.utils.encode_cell({ r: r0 + i, c: c0 + C.sejk })];
+                const m = cell && cell.f ? cell.f.replace(/\$/g, '').match(/SUM\(\s*[A-Z]+(\d+)\s*:\s*[A-Z]+(\d+)\s*\)/i) : null;
+                if (m) sumBlocks.push({ from: +m[1], to: +m[2] });
+            }
+            const blockOf = i => sumBlocks.findIndex(b => xlRow(i) >= b.from && xlRow(i) <= b.to);
+            const dupGroups = [], btnMismatch = [], luukNames = {};
             let end = rows.length;
             for (let i = hr + 1; i < rows.length; i++) {
                 const r = rows[i];
                 if (r.some(c => /paigaldatud seadmete loetelu|toote kirjeldus|^sea arvutuse alus/i.test(txt(c)))) { end = i; break; }
                 if (r.every(c => txt(c) === '')) continue;
-                if (txt(r[C.zone]) && !/^SE\s*[–-]?\s*-?\d/i.test(txt(r[C.zone]))) { end = i; break; } // märkused tabeli all
+                if (txt(r[C.zone]) && !/^SEA?\s*[–-]?\s*-?\d/i.test(txt(r[C.zone]))) { end = i; break; } // märkused tabeli all
                 if (txt(r[C.zone])) {
                     zone = txt(r[C.zone]);
                     if (!zones[zone]) {
@@ -2028,8 +2108,16 @@
 
                 const g = txt(r[C.grp]);
                 if (g) {
-                    const gn = parseInt((g.match(/\d+/) || ['0'])[0], 10);
-                    if (!blk || blk.seen[gn]) newBlock(); // grupi number kordub -> uus juhtimiskeskus
+                    let gn = parseInt((g.match(/\d+/) || ['0'])[0], 10);
+                    const bi = sumBlocks.length ? blockOf(i) : -1;
+                    if (bi >= 0) {
+                        if (!blk || blk.sumIdx !== bi) { newBlock(); blk.sumIdx = bi; }
+                        if (blk.seen[gn]) { // sama keskuse sees kordub grupi number -> tabeli viga, nummerdame järjest
+                            const nn = Math.max(...Object.keys(blk.seen).map(Number)) + 1;
+                            dupGroups.push({ i, zone, from: g, to: nn, blk: blocks.length });
+                            gn = nn;
+                        }
+                    } else if (!blk || blk.seen[gn]) newBlock(); // summavalemit pole: grupi number kordub -> uus juhtimiskeskus
                     blk.seen[gn] = true;
                     grp = { num: gn, zones: [], sel: 0, sea: 0, buttons: {} };
                     blk.groups.push(grp);
@@ -2039,11 +2127,18 @@
 
                 const sj = r[C.sejk];
                 if (txt(sj)) {
-                    if (/^sejk\s*\S+/i.test(txt(sj))) blk.nr = txt(sj);
+                    if (/^(sejk|sljk|slk)\s*\S+/i.test(txt(sj))) { blk.nr = txt(sj); blk.nrI = i; }
                     else if (typeof sj === 'number' || /^[\d.,]+\s*a?$/i.test(txt(sj))) { blk.total = num(sj); blk.totalI = i; }
                     else if (/^sv/i.test(txt(sj)) || !blk.name) { blk.name = txt(sj); blk.nameI = i; } // muu tekst (nt ruumi nr) ei kirjuta keskuse tüüpi üle
                 }
-                if (txt(r[C.btn])) { grp.buttons[txt(r[C.btn])] = true; Z.buttons[txt(r[C.btn])] = true; }
+                const bt = txt(r[C.btn]);
+                if (bt) {
+                    const zb = (zone.match(/SEA?\s*-?\s*(-?\d+\.\d+)/i) || [])[1], bb = (bt.match(/SE\s*-?\s*(-?\d+\.\d+)/i) || [])[1];
+                    if (zb && bb && zb !== bb) btnMismatch.push({ zone, bt, cell: A1(i, C.btn) });
+                    // "2xSE1.1L" = 2 nuppu; "ATS/TOA OPUS" = juhtimine ATS-ist / katusele pääsu lülitist, mitte käivitusnupp
+                    if (/\b(ATS|TOA|OPUS)\b/i.test(bt) && !/\bi?MCP\b|SE\s*-?\d/i.test(bt)) Z.ats = bt;
+                    else { const n = parseInt((bt.match(/^(\d+)\s*[x×]/i) || [0, 1])[1], 10); grp.buttons[bt] = n; Z.buttons[bt] = n; }
+                }
 
                 if (txt(r[C.circ])) {
                     circ = { i, zone, grp: grp.num, blk: blocks.length, stated: num(r[C.circ]), sum: 0, row: xlRow(i),
@@ -2051,6 +2146,7 @@
                     circuits.push(circ);
                 }
                 const l = txt(r[C.luuk]);
+                if (/^se[la]\b/i.test(l)) { const k = l.replace(/\s+/g, ' ').toUpperCase(); (luukNames[k] = luukNames[k] || []).push(A1(i, C.luuk)); }
                 if (/^se[la]\b/i.test(l)) {
                     const isSea = /^sea/i.test(l);
                     const aa = num(r[C.aa]);
@@ -2065,12 +2161,20 @@
                         const dir = /sisse/i.test(d) ? 'sisse' : /välja/i.test(d) ? 'välja' : '';
                         const cv = num((d.match(/Cv\s*([\d.,]+)/i) || [])[1]);
                         const issues = [];
-                        if (dim && !isNaN(av) && Math.abs(dim[1] * dim[2] / 1e6 - av) > 0.01)
+                        const o70 = /\bori(vent)?\s*70/i.test(l + ' ' + d); // testitud seinaluuk: Cv DoP nr 17 järgi, mitte tabel B.1
+                        const inner = dim ? (dim[1] - 160) * (dim[2] - 160) / 1e6 : NaN; // Orivent 70: nimimõõt − 10 (lengi välismõõt) − 150 (sisemõõt)
+                        if (dim && !isNaN(av) && Math.abs(dim[1] * dim[2] / 1e6 - av) > 0.01 && !(o70 && Math.abs(inner - av) <= 0.01))
                             issues.push(['err', `Av ${fmt(av)} m² ei vasta mõõtudele ${dim[1]}×${dim[2]} (${fmt(dim[1] * dim[2] / 1e6)} m²)`]);
                         if (!isNaN(av) && !isNaN(cv) && !isNaN(aa) && Math.abs(av * cv - aa) > 0.01)
                             issues.push(['err', `Aa ${fmt(aa)} m² ≠ Av × Cv = ${fmt(av * cv)} m²`]);
                         if (isNaN(ang) || !dir || isNaN(cv)) {
-                            issues.push(['warn', 'avanemisnurka, suunda (välja/sisse) või Cv-d ei leitud, tabeli B.1 kontroll tegemata']);
+                            issues.push(['warn', `avanemisnurka, suunda (välja/sisse) või Cv-d ei leitud, ${o70 ? 'DoP nr 17' : 'tabeli B.1'} kontroll tegemata`]);
+                        } else if (o70) {
+                            // DoP nr 17 (Orivent 70SL-m, 17.02.2023): Aa 0,40 / 0,43 / 0,61 / 0,87 m², avanemisnurk 60°; Aa / sisemõõdu Av ≈ 0,56
+                            if (ang < 30) issues.push(['err', `avanemisnurk ${ang}° alla 30°`]);
+                            else if (ang >= 60 && cv > 0.565) issues.push(['err', `Cv ${fmt(cv)} on suurem kui Orivent 70 DoP nr 17 (≈ 0,56 lengi sisemõõdust, avanemisnurk 60°)`]);
+                            else if (ang < 60) issues.push(['warn', `Orivent 70: DoP nr 17 deklareerib Aa avanemisnurgal 60°; Cv ${fmt(cv)} nurgal ${ang}° ei ole DoP-ga tõendatud (Keraplasti parameetrite tabel). Kontrolli ajami käiku.`]);
+                            else o70ok++;
                         } else {
                             const B1 = { 'välja': [[30, 0.25], [45, 0.3], [60, 0.4], [90, 0.5]], 'sisse': [[30, 0.2], [45, 0.25], [60, 0.3], [90, 0.4]] };
                             const row = B1[dir].filter(x => x[0] <= ang).pop(); // vahepealne nurk -> väiksem nurk (ohutum)
@@ -2078,12 +2182,13 @@
                             else if (cv > row[1] + 1e-9) issues.push(['err', `Cv ${fmt(cv)} on suurem kui EVS 919 tabel B.1 lubab (${row[0]}° ${dir}: ${fmt(row[1])})`]);
                         }
                         if (issues.length) issues.forEach(([lv, t]) => seaRes.issues.push([lv, `${l} (${zone}): ${t}`, [A1(i, C.av)]]));
-                        else seaRes.ok++;
+                        else if (!o70) seaRes.ok++;
                     } else {
                         grp.sel++;
                         const av = typeof r[C.av] === 'number' ? r[C.av] : num((txt(r[C.av]).match(/Av\s*([\d.,]+)/i) || [])[1]);
                         const k = isNaN(av) ? '?' : fmt(av);
                         sizes[k] = (sizes[k] || 0) + 1;
+                        if (!isNaN(aa) && aaBySize[k] === undefined) aaBySize[k] = Math.round(aa * 100) / 100;
                         if (!isNaN(av) && av > 0 && !isNaN(aa)) {
                             const cv = aa / av;
                             if (Math.abs(cv * 100 - Math.round(cv * 100)) < 1e-6) { const key = fmt(cv); selCv[key] = (selCv[key] || 0) + 1; }
@@ -2103,13 +2208,26 @@
                     name: `Gr ${g.num} - ${g.zones.join(', ')}`,
                     sel: g.sel ? String(g.sel) : '', sea: g.sea ? String(g.sea) : '',
                     hoc: g.sea ? String(g.sea) : '',               // HOC = 1 iga SEA avatava osa kohta
-                    imcp: Object.keys(g.buttons).length ? String(Object.keys(g.buttons).length) : '',
+                    imcp: nBtn(g.buttons) ? String(nBtn(g.buttons)) : '',
                     mcp: '', opus: '', wr: ''
                 }))
             }));
+            // keskuste tähised: sama tähis kahel keskusel -> järjenumber
+            const seenNr = {};
+            sejks.forEach((sj, i) => {
+                const k = sj.nr.replace(/[\s-]/g, '').toLowerCase();
+                if (seenNr[k] !== undefined) {
+                    add('err', `Kahel keskusel on sama tähis „${sj.nr}“ (${i + 1}. keskus${sj.name ? ', ' + sj.name : ''}). Aktile pandud „SEJK ${i + 1}“ – paranda tabelis.`, [blocks[i].nrI !== undefined ? A1(blocks[i].nrI, C.sejk) : '']);
+                    sj.nr = 'SEJK ' + (i + 1);
+                } else seenNr[k] = i;
+            });
+            if (dupGroups.length) add('err', `Grupi number kordub sama keskuse sees: ${dupGroups.map(d => `${d.zone} „${d.from}“ → Gr ${d.to}`).join('; ')}. Aktile nummerdatud järjest – paranda tabelis.`, dupGroups.map(d => A1(d.i, C.grp)));
+            if (btnMismatch.length) add('warn', `Käivitusnupu tähis ei vasta tsoonile: ${btnMismatch.map(b => `${b.zone} → „${b.bt}“`).join('; ')}.`, btnMismatch.map(b => b.cell));
+            const dupL = Object.entries(luukNames).filter(([, c]) => c.length > 1);
+            if (dupL.length) add('warn', `Luugi tähis kordub: ${dupL.map(([k, c]) => `${k} (${c.join(', ')})`).join('; ')}.`, dupL.flatMap(([, c]) => c));
             const totalGroups = sejks.reduce((n, s) => n + s.grupps.length, 0);
             const totalSel = Object.values(sizes).reduce((a, b) => a + b, 0);
-            const totalBtn = blocks.reduce((n, b) => n + b.groups.reduce((m, g) => m + Object.keys(g.buttons).length, 0), 0);
+            const totalBtn = blocks.reduce((n, b) => n + b.groups.reduce((m, g) => m + nBtn(g.buttons), 0), 0);
             const zoneList = Object.entries(zones);
 
             // --- kontroll 1: tsoonide efektiivne pindala
@@ -2165,14 +2283,18 @@
             // Käivitustase 2 (p 8.1.28): vähemalt 2 juhtimispunkti -> 1 nupp + tabloo päästemeeskonna sisenemisteel.
             // Käivitustase 3: piisab juhtimispunktist päästemeeskonna sisenemisteel.
             const tabloNeeded = zoneList.length > 3 || zoneList.some(([, Z]) => Z.kind === 'M');
-            const btnZones = { one: [], none: [] };
+            const btnZones = { one: [], none: [], ats: [], atsWarn: [] };
             zoneList.forEach(([z, Z]) => {
                 const lv = !isNaN(Z.level) ? Z.level : Z.nameLevel;
-                const n = Object.keys(Z.buttons).length;
+                const n = nBtn(Z.buttons);
+                if (!Z.units) return; // tsoonis pole Keraplasti seadmeid (nt mehaaniline, teiste töövõtt)
+                if (!n && Z.ats) { (lv === 3 ? btnZones.ats : btnZones.atsWarn).push(z); return; }
                 if (!n) btnZones.none.push(z);
                 else if (lv === 2 && n < 2) btnZones.one.push(z);
             });
             if (btnZones.none.length) add('warn', `Käivitusnupp puudub tsoonides: ${btnZones.none.join(', ')}.`, btnZones.none.map(z => A1(zones[z].i, C.btn)));
+            if (btnZones.ats.length) add('ok', `Käivitustase 3: ${btnZones.ats.join(', ')} juhitakse ATS-ist / päästemeeskonna lülitist (${zones[btnZones.ats[0]].ats}) – üks juhtimispunkt piisab (EVS 919 p 8.1.28).`);
+            if (btnZones.atsWarn.length) add('warn', `Tsoonides ${btnZones.atsWarn.join(', ')} on juhtimine ainult ATS/OPUS, käivitusnuppu pole, kuid käivitustase pole 3. Kontrolli.`, btnZones.atsWarn.map(z => A1(zones[z].i, C.btn)));
             if (btnZones.one.length) {
                 if (tabloNeeded)
                     add('ok', `Käivitustase 2: ${btnZones.one.length} tsoonis 1 käivitusnupp + infotabloo = 2 juhtimispunkti (EVS 919 p 8.1.1, 8.1.28). Tabloo päästemeeskonna sisenemisteel ei kuulu Keraplasti tarnesse – peab olema hoone projektis.`);
@@ -2198,6 +2320,7 @@
 
             // --- kontroll 6: SEA (EVS 919 tabel B.1) ja SEL Aa allikas
             seaRes.issues.forEach(([lv, t, cells]) => add(lv, t, cells));
+            if (o70ok) add('ok', `Orivent 70 (${o70ok} tk): avanemisnurk ≥ 60°, Cv vastab DoP nr 17 (EN 12101-2 järgi testitud, tabel B.1 ei kehti).`);
             if (seaRes.ok) add('ok', `SEA (${seaRes.ok} tk): Av, Aa ja Cv vastavad EVS 919 tabelile B.1 (kehtib alaservast hingedega, EN 12101-2 järgi testimata akendele).`);
             Object.entries(selCv).forEach(([cv, n]) => {
                 add('warn', `SEL Aa on arvutatud Av × ${cv} (${n} luuki). EVS 919 lisa E.2 ja B.3: kasuta toimivusdeklaratsiooni (DoP) või CE-märgise Aa väärtust.`, [A1(hr, C.aa)]);
@@ -2231,14 +2354,20 @@
             // --- kontroll 8: kaabli ristlõige (SVL juhend lk 16–17: pingelang max 15 %, Cu ρ = 0,0183)
             if (O.len >= 0) {
                 const STD = [1.5, 2.5, 4, 6, 10, 16];
-                let okN = 0;
+                let okN = 0; const strict = [];
                 circuits.forEach(c => {
                     if (isNaN(c.len) || isNaN(c.stated)) return;
                     const b = blocks[c.blk - 1] || { name: '' };
                     const U = num((b.name.match(/(\d+)\s*V\b/i) || [])[1]) || 48;
                     const need = 0.0183 * 2 * c.len * c.stated / (0.15 * U);
                     const where = `${c.zone} (Gr ${c.grp}, ahel ${fmt(c.len, 0)} m, ${fmt(c.stated, 1)} A)`;
-                    if (!isNaN(c.cs) && Math.abs(c.cs - need) > 0.02) add('err', `${where}: ristlõige tabelis ${fmt(c.cs)} mm², arvutus ${fmt(need)} mm² (${U} V, pingelang 15 %).`, [A1(c.i, O.cs)]);
+                    if (!isNaN(c.cs) && c.cs + 0.02 < need) add('err', `${where}: ristlõige tabelis ${fmt(c.cs)} mm² on väiksem kui Actuluxi miinimum ${fmt(need)} mm² (${U} V, pingelang 15 %).`, [A1(c.i, O.cs)]);
+                    else if (!isNaN(c.cs) && c.cs > need + 0.02) {
+                        // Tabelis rangem tootja valem (Keraplasti tabel „Kaabli minimaalse ristlõike arvutus“): d+h I·L/80, Aumüller/Velux I·L/56
+                        const il = c.stated * c.len;
+                        const f = Math.abs(c.cs - il / 80) <= 0.02 ? 'd+h 24V I·L/80' : Math.abs(c.cs - il / 56) <= 0.02 ? 'Aumüller/Velux 24V I·L/56' : '';
+                        strict.push(`${c.zone} Gr ${c.grp}: ${fmt(c.cs)} ≥ ${fmt(need)} mm²${f ? ' (' + f + ')' : ''}`);
+                    }
                     const m = c.cable.match(/\d+\s*[x×]\s*([\d.,]+)/);
                     const got = m ? num(m[1]) : NaN;
                     const next = STD.find(s => s + 1e-9 >= need);
@@ -2250,6 +2379,7 @@
                     } else okN++;
                 });
                 if (okN) add('ok', `Kaabli ristlõige: ${okN} ahelat klapib (pingelang kuni 15 %).`);
+                if (strict.length) add('ok', `Kaabli ristlõige tabelis suurem kui Actuluxi miinimum (rangem tootja valem, nõue täidetud): ${strict.join('; ')}.`);
             }
 
             // --- kontroll 9: "Paigaldatud seadmete loetelu" vs tabeli read
@@ -2290,7 +2420,7 @@
             checks.sort((a, b) => order[a.level] - order[b.level]);
             return {
                 meta, address: meta.address, object: meta.objectType, sejks, checks,
-                totals: { sel: totalSel, sizes, sea: seaTotal, buttons: totalBtn, groups: totalGroups, centers }
+                totals: { sel: totalSel, sizes, aaBySize, sea: seaTotal, buttons: totalBtn, groups: totalGroups, centers }
             };
         }
 
@@ -2426,7 +2556,8 @@
                 address, object: document.getElementById('impObject').value.trim(),
                 client: document.getElementById('impClient').value.trim(),
                 sejks: parsed.sejks.map(s => ({ nr: s.nr, name: s.name, grupps: s.grupps })),
-                meta: Object.assign({}, parsed.meta, { checks: parsed.checks.filter(c => c.level !== 'ok').map(c => c.text) }),
+                meta: Object.assign({}, parsed.meta, { checks: parsed.checks.filter(c => c.level !== 'ok').map(c => c.text),
+                    totals: Object.assign({}, parsed.totals, { centerNames: parsed.sejks.map(s => s.name) }) }), // kogused Work Orderi võrdluseks
                 workDate: new Date().toLocaleDateString('et-EE'), workNumber: parsed.meta.projectNo || '',
                 compiler: document.getElementById('compiler').value || 'import',
                 changes: existing ? diffStructure(existing.sejks || [], parsed.sejks).map(c => Object.assign(c, { what: 'Import: ' + c.what })) : []
@@ -2489,7 +2620,11 @@
                 <tr><th>Kokku</th><th></th><th>${sum('sel')}</th><th>${sum('sea')}</th><th>${sum('imcp')}</th></tr></table></div>`;
         }
 
+        let cardData = null;
+
         function renderCard(c) {
+            cardData = c;
+            woResult = null;
             const o = c.object || { address: cardKey, sejks: [] };
             const m = c.meta || {};
             const fileList = cat => (c.files[cat] || []).length
@@ -2506,6 +2641,12 @@
                     <span>Tabel</span><span>${escapeHtml([m.compiledBy, m.date, m.version].filter(Boolean).join(' · '))}</span>
                 </div>${(m.checks || []).length ? `<div style="margin-top:0.4rem">${m.checks.map(t => `<div class="chk warn">${escapeHtml(t)}</div>`).join('')}</div>` : ''}</div>` : ''}
                 ${cardStructure(o)}
+                <div class="card-sec"><h4>Work Orderi võrdlus</h4>
+                    <div class="muted">Vali Work Orderi PDF või Business Centrali ridade Excel. Fail loetakse ainult siin, hindu ei kasutata ega salvestata.</div>
+                    <input type="file" id="woInput" accept=".pdf,.xlsx,.xls" style="display:none" onchange="woFile(this.files[0]); this.value='';">
+                    <button class="plan-btn small" onclick="openWO()">🔍 Võrdle Work Orderiga</button>
+                    <div id="woBox" style="margin-top:0.5rem"></div>
+                </div>
                 <div class="card-sec"><h4>Failid</h4>
                     ${c.categories.map(cat => `<div style="margin-bottom:0.5rem"><div class="muted">${escapeHtml(cat)}</div>${fileList(cat)}</div>`).join('')}
                     <div class="upload-row">
@@ -2539,6 +2680,299 @@
             }
             showToast('✓ Failid lisatud');
             openCard(cardKey);
+        }
+
+        // ===== Work Orderi võrdlus põhinäitajate tabeliga =====
+        // Sisend: Work Orderi PDF (Business Central) või BC ridade Excel ("Open in Excel").
+        // Hindu ei loeta ega salvestata: Excelist võetakse ainult Type, No., Description, Quantity, ühik.
+        // Fail töödeldakse ainult brauseris; Drive'i läheb ainult hindadeta kontrolliaruanne.
+        let woResult = null;
+
+        function loadPdfJs() {
+            if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+            return new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+                s.onload = () => {
+                    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                    resolve(window.pdfjsLib);
+                };
+                s.onerror = () => reject(new Error('PDF lugeja ei laadinud (internet?)'));
+                document.head.appendChild(s);
+            });
+        }
+
+        // PDF -> tekstiread (sama y = üks rida; suurem vahe sõnade vahel = kaks tühikut)
+        async function pdfLines(buf) {
+            const pdfjs = await loadPdfJs();
+            const pdf = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+            const out = [];
+            for (let p = 1; p <= pdf.numPages; p++) {
+                const tc = await (await pdf.getPage(p)).getTextContent();
+                const rows = [];
+                tc.items.forEach(it => {
+                    if (!it.str || !it.str.trim()) return;
+                    const y = it.transform[5], x = it.transform[4];
+                    let row = rows.find(r => Math.abs(r.y - y) < 3);
+                    if (!row) { row = { y, items: [] }; rows.push(row); }
+                    row.items.push({ x, w: it.width || 0, s: it.str });
+                });
+                rows.sort((a, b) => b.y - a.y).forEach(r => {
+                    r.items.sort((a, b) => a.x - b.x);
+                    let line = '', end = null;
+                    r.items.forEach(it => {
+                        if (end !== null) line += (it.x - end > 8) ? '  ' : (it.x - end > 0.5 ? ' ' : '');
+                        line += it.s; end = it.x + it.w;
+                    });
+                    out.push(line.replace(/\s+$/, ''));
+                });
+            }
+            return out;
+        }
+
+        // Work Orderi tekstiread -> { orderNo, client, lines: [{type, no, desc, qty, uom}] }
+        function parseWOText(lines) {
+            if (lines.some(l => /Tellimuse kinnitus/i.test(l))) return parseSOText(lines);
+            const res = { orderNo: '', client: '', lines: [] };
+            let inTable = false, last = null;
+            lines.forEach((raw, idx) => {
+                const l = raw.trim();
+                const so = l.match(/Sales Order No\.?\s*(\S+)/i);
+                if (so) { res.orderNo = so[1]; res.client = l.replace(/Sales Order No\.?\s*\S+/i, '').trim(); }
+                if (/^Type\s+No\.?\s+Description/i.test(l)) { inTable = true; last = null; return; }
+                if (/^Extra Item|^Quantity used/i.test(l)) { if (/^Extra/i.test(l)) inTable = false; last = null; return; }
+                if (!inTable || !l) return;
+                const m = l.match(/^(Item|Resource|G\/L Account)\s+(\S+)\s+(.+?)\s+(\d+(?:[.,]\d+)?)\s+(tk|pcs|kmpl|kompl|komplekt|m|m2|jm|h|kg|l|pakk|rull|paar|set)\.?(?:\s+[\d.,]+(?:\s+\S+)?)?$/i);
+                if (m) {
+                    last = { type: m[1], no: m[2], desc: m[3].trim(), qty: parseFloat(m[4].replace(',', '.')), uom: m[5] };
+                    res.lines.push(last);
+                } else if (last && !/^(Type|Page|Work Order)\b/i.test(l)) {
+                    last.desc += ' ' + l; // pikk kirjeldus jätkub järgmisel real
+                }
+            });
+            return res;
+        }
+
+        // BC "Tellimuse kinnitus" (Sales Order PDF, hindadeta): "kood kogus", järgmisel real kirjeldus, "- ..." kommentaarid
+        function parseSOText(lines) {
+            const res = { orderNo: '', client: '', lines: [], kind: 'Tellimuse kinnitus' };
+            let inTable = false, last = null, wantDesc = false, section = '';
+            res.sections = [];
+            lines.forEach((raw, i) => {
+                const l = raw.trim();
+                if (!res.orderNo && /^Tellimuse nr/i.test(l)) { const n = (lines[i + 1] || '').trim().match(/^(\S+)/); if (n) res.orderNo = n[1]; }
+                if (!res.client && /^Tellija$/i.test(l)) { for (let j = i + 1; j < lines.length; j++) if (lines[j].trim()) { res.client = lines[j].trim(); break; } }
+                if (/^Nr\s+Kogus$/i.test(l)) { inTable = true; return; }
+                if (/^Aadress\b/.test(l)) { inTable = false; return; } // lehe jalus
+                if (!inTable || !l) return;
+                const m = l.match(/^(\d{2}[A-Z0-9]\d{4,})\s+(\d+(?:[.,]\d+)?)$/);
+                if (m) { last = { type: 'Item', no: m[1], desc: '', qty: parseFloat(m[2].replace(',', '.')), uom: '', notes: [], section }; res.lines.push(last); wantDesc = true; return; }
+                if (!last && !/^-/.test(l)) { section = l; res.sections.push(l); return; }
+                if (!last) return;
+                if (/^-/.test(l)) {
+                    last.notes.push(l.replace(/^-\s*/, ''));
+                    const aa = l.match(/efektiivne\s+pi\w*la\s*([\d.,]+)\s*m/i); // ka trükiviga "pidnala"
+                    if (aa) last.aa = parseFloat(aa[1].replace(',', '.'));
+                    wantDesc = false;
+                } else if (wantDesc) { last.desc = l; wantDesc = false; }
+                else { section = l; res.sections.push(l); } // müügi kommentaaririda (nt SLK_1, Lisaseadmed: …) = grupi pealkiri
+            });
+            return res;
+        }
+
+        // BC "Open in Excel" -> sama kuju; hinnaveerge ei loeta
+        function parseWOExcel(wb) {
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+            const hi = rows.findIndex(r => r.some(c => String(c).trim() === 'Type') && r.some(c => /^Description$/i.test(String(c).trim())));
+            if (hi < 0) throw new Error('Excelis ei leitud veerge Type / No. / Description / Quantity');
+            const H = rows[hi].map(c => String(c).trim().toLowerCase());
+            const col = n => H.indexOf(n);
+            const C = { type: col('type'), no: col('no.'), desc: col('description'), qty: col('quantity'), uom: col('unit of measure code') };
+            const res = { orderNo: '', client: '', lines: [] };
+            rows.slice(hi + 1).forEach(r => {
+                const type = String(r[C.type] || '').trim();
+                if (!type || /^comment$/i.test(type)) return; // kommentaarirea (värv jms) Work Orderile ei tule
+                res.lines.push({ type, no: String(r[C.no] || '').trim(), desc: String(r[C.desc] || '').trim(),
+                    qty: parseFloat(String(r[C.qty]).replace(',', '.')) || 0, uom: C.uom >= 0 ? String(r[C.uom] || '') : '' });
+            });
+            return res;
+        }
+
+        // Work Orderi rida -> kategooria
+        function classifyWO(line) {
+            const d = line.desc.toLowerCase();
+            const fmt2 = v => (Math.round(v * 100) / 100).toString().replace('.', ',');
+            if (/paigaldus|transport|seadistus|\btöö\b|montaa/.test(d) && !/^\S*\s*suitsuluuk/.test(d)) return { cat: 'teenus' };
+            if (/seinaluuk|\bori\s*70|orivent\s*70/.test(d)) {
+                const m = d.match(/(\d{3,4})\s*[x×]\s*(\d{3,4})/);
+                return { cat: 'sea', key: m ? fmt2(m[1] * m[2] / 1e6) : '?' };
+            }
+            if (/suitsuluuk|orivent/.test(d)) {
+                const m = d.match(/(\d{3,4})\s*[x×]\s*(\d{3,4})/);
+                return m ? { cat: 'sel', key: fmt2(m[1] * m[2] / 1e6) } : { cat: 'sel', key: '?' };
+            }
+            if (/juhtimiskeskus/.test(d)) {
+                const m = line.desc.match(/(SV[LM](?:\s*EI)?)\s*(\d+)\s*V?\s*-\s*(\d+)\s*A/i);
+                return { cat: 'keskus', key: m ? `${m[1].toUpperCase().replace(/\s+/g, ' ')} ${m[2]}V-${m[3]}A` : line.desc };
+            }
+            if (/rühmakaart/.test(d)) return { cat: 'kaart' };
+            if (/käivitusnupp|\bi?mcp\b/.test(d)) return { cat: 'nupp' };
+            if (/\bhoc\b|akna asendiandur/.test(d)) return { cat: 'hoc' };
+            if (/kinnitus/.test(d)) return { cat: 'muu' };
+            if (/kettajam|aknaajam|\bhcv\b|\bajam\b/.test(d)) return { cat: 'ajam' };
+            if (/\bsea\b|suitsueemaldusaken/.test(d)) return { cat: 'sea' };
+            if (/opus|tuulutuslüliti/.test(d)) return { cat: 'opus' };
+            return { cat: 'muu' };
+        }
+
+        const keskusKey = name => {
+            const m = String(name || '').match(/(SV[LM](?:\s*EI)?)\s*(\d+)\s*V?\s*-\s*(\d+)\s*A/i);
+            return m ? `${m[1].toUpperCase().replace(/\s+/g, ' ')} ${m[2]}V-${m[3]}A` : String(name || '');
+        };
+
+        // Võrdlus: [{label, table, wo, level, note}], muud read eraldi
+        function compareWO(t, wo) {
+            const rows = [], other = [];
+            const sum = { sel: {}, keskus: {}, kaart: 0, nupp: 0, hoc: 0, sea: 0, ajam: 0 }, aaWo = {};
+            wo.lines.forEach(l => {
+                const c = classifyWO(l);
+                if (c.cat === 'sel' && l.aa !== undefined) aaWo[c.key] = l.aa;
+                if (c.cat === 'sel') sum.sel[c.key] = (sum.sel[c.key] || 0) + l.qty;
+                else if (c.cat === 'keskus') sum.keskus[c.key] = (sum.keskus[c.key] || 0) + l.qty;
+                else if (['kaart', 'nupp', 'hoc', 'sea', 'ajam'].includes(c.cat)) sum[c.cat] += l.qty;
+                else other.push({ ...l, cat: c.cat });
+            });
+            const add = (label, table, w, note) => {
+                const level = table === w ? 'ok' : (w < table ? 'err' : 'warn');
+                const diff = level === 'err' ? `puudu ${table - w}` : level === 'warn' ? `üle ${w - table}` : '';
+                rows.push({ label, table, wo: w, level, note: [diff, note && level !== 'ok' ? `(${note})` : ''].filter(Boolean).join(' ') });
+            };
+            const sizes = new Set([...Object.keys(t.sizes || {}), ...Object.keys(sum.sel)]);
+            [...sizes].sort().forEach(k => add(`Suitsuluuk SEL Av ${k} m²`, (t.sizes || {})[k] || 0, sum.sel[k] || 0));
+            // Efektiivne pindala tellimuses vs tabeli SEL Aa (sama luugisuurus)
+            Object.keys(aaWo).sort().forEach(k => {
+                const ta = (t.aaBySize || {})[k];
+                if (ta === undefined) return;
+                const f2 = v => v.toFixed(2).replace('.', ',');
+                const same = Math.abs(ta - aaWo[k]) < 0.006;
+                const cv = Math.round(aaWo[k] / parseFloat(k.replace(',', '.')) * 100) / 100;
+                rows.push({ label: `SEL Av ${k} m² – efektiivne pindala Aa`, table: f2(ta), wo: f2(aaWo[k]), level: same ? 'ok' : 'warn',
+                    note: (same ? '' : 'Aa erineb; ') + `tellimuses Aa/Av ≈ ${cv.toString().replace('.', ',')} – kontrolli DoP-st` });
+            });
+            const names = (t.centerNames || []).map(keskusKey);
+            const kk = new Set([...names, ...Object.keys(sum.keskus)]);
+            [...kk].forEach(k => add(`Juhtimiskeskus ${k}`, names.filter(n => n === k).length, sum.keskus[k] || 0));
+            if (names.length && names.every(n => /^SVL/.test(n)))
+                add('SVL rühmakaart', Math.max(0, (t.groups || 0) - 2 * names.length), sum.kaart,
+                    'eeldus: keskuses 2 gruppi, iga kaart +1 grupp');
+            else if (sum.kaart) add('SVL rühmakaart', 0, sum.kaart);
+            add('Käivitusnupp (iMCP/MCP)', t.buttons || 0, sum.nupp);
+            if ((t.sea || 0) || sum.sea) {
+                if (!sum.sea && sum.ajam) // tellimuses ainult ajamid: aknad võivad olla kliendi omad
+                    rows.push({ label: 'Suitsueemaldusaken / seinaluuk SEA', table: t.sea || 0, wo: 0, level: 'warn',
+                        note: `seinaluuke pole, kettajameid ${sum.ajam} – kas aknad on kliendi omad?` });
+                else add('Suitsueemaldusaken / seinaluuk SEA', t.sea || 0, sum.sea);
+            }
+            if (sum.ajam) rows.push({ label: 'Kettajam HCV (SEA avamiseks)', table: '–', wo: sum.ajam, level: 'ok',
+                note: `tabelis SEA ${t.sea || 0}; tabelist ajamite arvu ei loe (kontrolli SEL I järgi)` });
+            if ((t.sea || 0) || sum.hoc) add('HOC (1 iga SEA kohta)', t.sea || 0, sum.hoc, 'eeldus: HOC iga SEA avatava osa kohta');
+            return { rows, other };
+        }
+
+        function openWO() {
+            const inp = document.getElementById('woInput');
+            if (inp) inp.click();
+        }
+
+        async function woFile(file) {
+            if (!file) return;
+            const c = cardData;
+            const t = c && c.meta && c.meta.totals;
+            const box = document.getElementById('woBox');
+            if (!t) { box.innerHTML = '<div class="chk warn">Objektil pole põhinäitajate tabeli koguseid. Impordi tabel uuesti (📥 Impordi tabel), siis saab võrrelda.</div>'; return; }
+            box.innerHTML = '<div class="muted">Loen Work Orderit...</div>';
+            try {
+                const buf = await file.arrayBuffer();
+                let wo;
+                if (/\.pdf$/i.test(file.name)) wo = parseWOText(await pdfLines(buf));
+                else wo = parseWOExcel(XLSX.read(buf, { type: 'array' }));
+                if (!wo.lines.length) throw new Error('Work Orderist ei leitud ühtegi rida');
+                woResult = { wo, cmp: compareWO(t, wo), fileName: file.name };
+                renderWO();
+            } catch (e) {
+                console.error(e);
+                box.innerHTML = `<div class="chk err">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function renderWO() {
+            const { wo, cmp } = woResult;
+            const errs = cmp.rows.filter(r => r.level === 'err').length, warns = cmp.rows.filter(r => r.level === 'warn').length;
+            const lvl = { err: 'err', warn: 'warn', ok: 'ok' };
+            document.getElementById('woBox').innerHTML = `
+                <div class="muted">${escapeHtml(wo.kind || 'Work Order')} ${escapeHtml(wo.orderNo || woResult.fileName)} · ${wo.lines.length} rida · ${errs} puudu, ${warns} üle</div>
+                <table class="card-tbl"><tr><th>Toode</th><th>Tabel</th><th>WO</th><th></th></tr>
+                ${cmp.rows.map(r => `<tr class="chk ${lvl[r.level]}"><td>${escapeHtml(r.label)}</td><td>${r.table}</td><td>${r.wo}</td><td>${escapeHtml(r.note)}</td></tr>`).join('')}
+                </table>
+                ${(wo.sections || []).length ? `<div class="muted" style="margin-top:0.4rem">Tellimuse grupid: ${wo.sections.map(escapeHtml).join(' · ')}</div>` : ''}
+                ${cmp.other.length ? `<div class="muted" style="margin-top:0.4rem">Ei võrrelda: ${cmp.other.map(o => escapeHtml(`${o.desc} (${o.qty})`)).join('; ')}</div>` : ''}
+                <button class="plan-btn small" onclick="saveWOReport()">📄 Salvesta aruanne (3 Paigaldus) ja laadi alla</button>`;
+        }
+
+        async function saveWOReport() {
+            if (!woResult || !cardData) return;
+            const { wo, cmp } = woResult;
+            const o = cardData.object || {}, m = cardData.meta || {};
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('p', 'mm', 'a4');
+            const today = new Date().toLocaleDateString('et-EE');
+            doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(237, 106, 94);
+            doc.text('KERAPLAST', 14, 15);
+            doc.setTextColor(0, 0, 0); doc.setFontSize(13);
+            doc.text(`Kontrolliaruanne: ${wo.kind || 'Work Order'} vs põhinäitajate tabel`, 14, 24);
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+            const info = [
+                `Objekt: ${o.address || ''}${o.object ? ' – ' + o.object : ''}`,
+                `${wo.kind || 'Work Order'} / Sales Order nr: ${wo.orderNo || woResult.fileName}${wo.client ? ' · ' + wo.client : ''}`,
+                `Põhinäitajate tabel: töö nr ${m.projectNo || ''} ${m.version || ''} ${m.date || ''}`.trim(),
+                `Koostatud ${today} automaatselt. Punane = Work Orderil puudu, oranž = Work Orderil üle, roheline = klapib.`
+            ];
+            info.forEach((t, i) => doc.text(t, 14, 31 + i * 5));
+            const fill = { err: [248, 201, 196], warn: [253, 227, 191], ok: [214, 240, 219] };
+            doc.autoTable({
+                startY: 52,
+                head: [['Toode', 'Tabel', wo.kind ? 'Tellimus' : 'Work Order', 'Märkus']],
+                body: cmp.rows.map(r => [r.label, r.table, r.wo, r.note]),
+                theme: 'grid',
+                styles: { fontSize: 9, cellPadding: 1.8 },
+                headStyles: { fillColor: [102, 102, 102], textColor: [255, 255, 255] },
+                columnStyles: { 1: { halign: 'center', cellWidth: 18 }, 2: { halign: 'center', cellWidth: 24 } },
+                didParseCell: d => { if (d.section === 'body') d.cell.styles.fillColor = fill[cmp.rows[d.row.index].level]; }
+            });
+            let y = doc.lastAutoTable.finalY + 6;
+            if (cmp.other.length) {
+                doc.setFontSize(9); doc.text('Work Orderi read, mida tabeliga ei võrrelda:', 14, y);
+                doc.autoTable({ startY: y + 2, head: [['Kood', 'Kirjeldus', 'Kogus']],
+                    body: cmp.other.map(l => [l.no, l.desc, `${l.qty} ${l.uom}`]), theme: 'grid',
+                    styles: { fontSize: 8, cellPadding: 1.2 }, headStyles: { fillColor: [160, 160, 160] } });
+                y = doc.lastAutoTable.finalY + 6;
+            }
+            if ((wo.sections || []).length) {
+                doc.setFontSize(9); doc.text(doc.splitTextToSize('Tellimuse grupid: ' + wo.sections.join(' · '), 180), 14, y);
+                y += 6 + 4 * Math.floor(wo.sections.join(' · ').length / 110);
+            }
+            if ((m.checks || []).length) {
+                doc.setFontSize(9); doc.text('Põhinäitajate tabeli kontroll (importimisel):', 14, y);
+                doc.autoTable({ startY: y + 2, body: m.checks.map((t, i) => [`${i + 1}. ${t}`]), theme: 'plain',
+                    styles: { fontSize: 7.5, cellPadding: 0.8 } });
+            }
+            const nr = String(wo.orderNo || woResult.fileName.replace(/\.[^.]+$/, '')).replace(/[\/\\:*?"<>|]/g, '');
+            const filename = `Kontrolliaruanne WO ${nr}.pdf`;
+            doc.save(filename);
+            const res = await postJson({ action: 'uploadFile', data: { address: o.address, category: '3 Paigaldus', filename, mime: 'application/pdf', base64: doc.output('datauristring') } });
+            showToast(res.success === false ? '⚠ ' + res.message : '✓ Aruanne salvestatud kausta 3 Paigaldus');
+            if (res.success !== false) openCard(cardKey);
         }
 
         // Add first SEJK on load
